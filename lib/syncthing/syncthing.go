@@ -258,7 +258,18 @@ func (a *App) startup() error {
 	a.Internals = newInternals(m)
 
 	a.mainService.Add(m)
-	a.cloudBackup = cloudbackup.New(a.cfg)
+	a.cloudBackup = cloudbackup.New(a.cfg, func() bool {
+		for id, folder := range a.cfg.Folders() {
+			if folder.Paused {
+				continue
+			}
+			state, _, _ := m.State(id)
+			if state != "idle" && state != "error" {
+				return true
+			}
+		}
+		return false
+	})
 	a.mainService.Add(a.cloudBackup)
 
 	// The TLS configuration is used for both the listening socket and outgoing

@@ -68,6 +68,17 @@ Authenticated endpoints:
 Status counts changed files copied in the current run, not cloud uploads. The
 GUI exposes configuration, status refresh, and a manual run control.
 
+Secondary backup yields while any enabled primary folder is starting, scanning,
+syncing, or cleaning. Its status becomes `waiting-for-primary`, then returns to
+`copying` after primary work has been idle for a second. An interrupted file is
+closed and its incomplete stage removed before waiting; it is retried using
+fresh source metadata when primary work finishes. Existing backup files and
+versions remain available. This also applies to manually queued backups.
+Google Drive uploads already queued by its own client can continue independently.
+
+Changes to unrelated settings do not cancel an active backup. Changing backup
+paths, ownership, folder paths, or paused state still cancels the old run.
+
 ## Signed automatic updates
 
 The feed is `https://api.github.com/repos/ecoded99/syncthing/releases`. Enable
