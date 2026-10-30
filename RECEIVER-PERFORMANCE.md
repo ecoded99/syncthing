@@ -67,8 +67,49 @@ version retention, and forcible receiver-process termination followed by restart
 and hash/mtime verification of 1,024 newly added files. It does not simulate a
 physical power failure.
 
-Actual receiving-PC/WAN comparisons are pending; do not infer a remote gain from
-the local result or enable higher concurrency on an untested device by default.
+## Receiving-laptop validation, 30 October 2026
+
+The same synthetic workload was tested over the existing Tailscale route to the
+actual Windows receiving laptop, using fresh isolated instances and destinations.
+The binary was identical in every condition. Network batching was off, file and
+directory flushes remained enabled, and antivirus protection was unchanged. The
+source completed its initial scan before receiver timing began. Every received
+file was subsequently checked by SHA-256 and exact physical modification time;
+that verification time is excluded from the transfer rate.
+
+With **eight workers in both conditions**, the ordered on/off/off/on transfer
+times were 135.860/141.608/143.029/140.357 seconds. Aggregate throughput was
+**0.943 MB/s off versus 0.972 MB/s on**, approximately **3.0% higher**. These two
+trials per condition do not establish a meaningful real-world improvement or
+justify deploying higher concurrency. Bracketing ordinary two-worker controls
+took 134.548 and 135.482 seconds, aggregating **0.994 MB/s**. The proposed
+eight-worker combination therefore did not beat the existing default behavior.
+All six small-file runs, totaling **49,152 files**, passed hash and exact-mtime
+verification.
+
+A subsequent ordinary two-worker control transferred the same 128 MiB as one
+file on the same route in **7.543 seconds (17.79 decimal MB/s)**, including
+receiver startup. Its hash and exact mtime also passed. This single control
+shows that the route can exceed 10 MB/s under the observed conditions; the
+small-file slowdown is not explained by a fixed 1 MB/s connection cap. It is
+not a sustained link-capacity measurement.
+
+The real laptop had its initial native backup running, and a process sample
+showed active Google Drive I/O. These measurements reflect that workload;
+they do not isolate a particular storage driver, background process, or antivirus
+as the cause. They must not be presented as an unloaded hardware limit.
+
+Filesystem counters confirmed that the new path ran on the receiving laptop.
+In the first enabled trial, open/create calls averaged about 25 ms and new-name
+moves about 49 ms. Operations overlap across workers, and wrapper measurements
+can include nested calls, so their durations cannot be summed into elapsed-time
+percentages. The evidence still points to substantial per-file receiver work
+remaining after metadata calls are combined. At 16 KiB per file, 10 decimal MB/s
+would require about 610 files per second; these enabled runs achieved about
+59 files per second.
+
+The **10 MB/s goal remains unmet**. Keep this feature experimental and disabled
+by default. It has not been released through OTA or enabled on live folders.
 
 ## API references
 
