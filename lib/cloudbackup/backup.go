@@ -45,10 +45,15 @@ type Service struct {
 	statuses     map[string]Status
 	requested    chan string
 	activeCancel context.CancelFunc
+	primaryBusy  func() bool
 }
 
-func New(cfg config.Wrapper) *Service {
-	return &Service{cfg: cfg, statuses: make(map[string]Status), requested: make(chan string, 16)}
+func New(cfg config.Wrapper, primaryBusy ...func() bool) *Service {
+	s := &Service{cfg: cfg, statuses: make(map[string]Status), requested: make(chan string, 16)}
+	if len(primaryBusy) > 0 {
+		s.primaryBusy = primaryBusy[0]
+	}
+	return s
 }
 func (*Service) String() string { return "cloud backup" }
 func (s *Service) Status(id string) Status {
@@ -68,7 +73,10 @@ func (s *Service) Run(id string) bool {
 	}
 }
 func (s *Service) set(id string, st Status) { s.mu.Lock(); s.statuses[id] = st; s.mu.Unlock() }
-func (s *Service) CommitConfiguration(_, _ config.Configuration) bool {
+func (s *Service) CommitConfiguration(from, to config.Configuration) bool {
+	if !backupInputsChanged(from, to) {
+		return true
+	}
 	s.mu.RLock()
 	cancel := s.activeCancel
 	s.mu.RUnlock()
@@ -90,6 +98,17 @@ func (s *Service) Serve(ctx context.Context) error {
 		defer func() { cancel(); s.mu.Lock(); s.activeCancel = nil; s.mu.Unlock() }()
 		st := Status{State: "copying", Started: time.Now().UTC()}
 		s.set(id, st)
+		if s.primaryBusy != nil {
+			control := &primaryControl{busy: s.primaryBusy, interval: 250 * time.Millisecond, idleDelay: time.Second}
+			control.state = func(waiting bool) {
+				st.State = "copying"
+				if waiting {
+					st.State = "waiting-for-primary"
+				}
+				s.set(id, st)
+			}
+			runCtx = context.WithValue(runCtx, primaryControlKey{}, control)
+		}
 		result, err := Backup(runCtx, f, s.cfg.Folders(), func(files, bytes int64) { st.Files = files; st.Bytes = bytes; s.set(id, st) })
 		st.Files = result.Files
 		st.Bytes = result.Bytes
@@ -232,6 +251,9 @@ func noLinks(path string) error {
 }
 
 func Backup(ctx context.Context, f config.FolderConfiguration, folders map[string]config.FolderConfiguration, progress func(int64, int64)) (result Result, err error) {
+	if err := waitForPrimary(ctx); err != nil {
+		return result, err
+	}
 	src, dst, err := ValidatePaths(f, folders)
 	if err != nil {
 		return result, err
@@ -308,7 +330,7 @@ func Backup(ctx context.Context, f config.FolderConfiguration, folders map[strin
 			recordError(walkErr)
 			return nil
 		}
-		if err := ctx.Err(); err != nil {
+		if err := waitForPrimary(ctx); err != nil {
 			return err
 		}
 		if name == "." {
@@ -358,7 +380,7 @@ func Backup(ctx context.Context, f config.FolderConfiguration, folders map[strin
 		} else if usage.Free < minFree+uint64(info.Size()) {
 			return errors.New("backup destination free space below reserve")
 		}
-		changed, err := copyFile(ctx, source, root, filepath.FromSlash(name), current, filepath.Join("Versions", runID, filepath.FromSlash(name)), info)
+		changed, err := copyWhenIdle(ctx, source, root, filepath.FromSlash(name), current, filepath.Join("Versions", runID, filepath.FromSlash(name)))
 		if err != nil {
 			recordError(fmt.Errorf("%s: %w", name, err))
 			return nil
@@ -463,13 +485,16 @@ type contextReader struct {
 }
 
 func (r contextReader) Read(b []byte) (int, error) {
-	if err := r.ctx.Err(); err != nil {
+	if err := checkPrimary(r.ctx); err != nil {
 		return 0, err
 	}
 	return r.r.Read(b)
 }
 
 func copyFile(ctx context.Context, src, dst *os.Root, name, current, version string, initial os.FileInfo) (bool, error) {
+	if err := checkPrimary(ctx); err != nil {
+		return false, err
+	}
 	in, err := src.Open(name)
 	if err != nil {
 		return false, err
@@ -576,7 +601,7 @@ func copyFile(ctx context.Context, src, dst *os.Root, name, current, version str
 			return false, err
 		}
 	}
-	if err = ctx.Err(); err != nil {
+	if err = checkPrimary(ctx); err != nil {
 		return false, err
 	}
 	if oldErr == nil && old.Mode().Perm()&0200 == 0 {
