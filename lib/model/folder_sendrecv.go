@@ -1193,6 +1193,7 @@ func (f *sendReceiveFolder) handleFile(ctx context.Context, file protocol.FileIn
 	})
 
 	s := newSharedPullerState(file, f.mtimefs, f.folderID, tempName, blocks, reused, f.IgnorePerms || file.NoPermissions, hasCurFile, curFile, !f.DisableSparseFiles, !f.DisableFsync)
+	s.fastMetadata = f.ExperimentalFastFinalization && file.Type == protocol.FileInfoTypeFile && file.Size <= 64<<10 && len(file.Encrypted) == 0 && f.Type != config.FolderTypeReceiveEncrypted && !f.SyncOwnership && !f.SyncXattrs
 
 	f.sl.DebugContext(ctx, "Handling file", slogutil.FilePath(file.Name), "blocksToCopy", len(blocks), "reused", len(reused))
 
@@ -1703,8 +1704,12 @@ loop:
 }
 
 func (f *sendReceiveFolder) performFinish(file, curFile protocol.FileInfo, hasCurFile bool, tempName string, dbUpdateChan chan<- dbUpdateJob, scanChan chan<- string) error {
+	return f.performFinishWithMetadata(file, curFile, hasCurFile, tempName, false, dbUpdateChan, scanChan)
+}
+
+func (f *sendReceiveFolder) performFinishWithMetadata(file, curFile protocol.FileInfo, hasCurFile bool, tempName string, metadataReady bool, dbUpdateChan chan<- dbUpdateJob, scanChan chan<- string) error {
 	// Set the correct permission bits on the new file
-	if !f.IgnorePerms && !file.NoPermissions {
+	if !metadataReady && !f.IgnorePerms && !file.NoPermissions {
 		if err := f.mtimefs.Chmod(tempName, fs.FileMode(file.Permissions&0o777)); err != nil {
 			return fmt.Errorf("setting permissions: %w", err)
 		}
@@ -1715,6 +1720,7 @@ func (f *sendReceiveFolder) performFinish(file, curFile protocol.FileInfo, hasCu
 		return fmt.Errorf("setting metadata: %w", err)
 	}
 
+	targetMissing := false
 	if stat, err := f.mtimefs.Lstat(file.Name); err == nil {
 		// There is an old file or directory already in place. We need to
 		// handle that.
@@ -1740,16 +1746,36 @@ func (f *sendReceiveFolder) performFinish(file, curFile protocol.FileInfo, hasCu
 		}
 	} else if !fs.IsNotExist(err) {
 		return fmt.Errorf("checking existing file: %w", err)
+	} else {
+		targetMissing = true
 	}
 
 	// Replace the original content with the new one. If it didn't work,
 	// leave the temp file in place for reuse.
-	if err := osutil.RenameOrCopy(f.CopyRangeMethod.ToFS(), f.mtimefs, f.mtimefs, tempName, file.Name); err != nil {
-		return fmt.Errorf("replacing file: %w", err)
+	var renamed bool
+	if metadataReady && targetMissing {
+		var err error
+		renamed, err = fs.RenameNew(f.mtimefs, tempName, file.Name)
+		if err != nil {
+			// In particular, do not retry an already-existing target with the
+			// destructive replacement path. Preserve a concurrent local edit.
+			return fmt.Errorf("installing new file: %w", err)
+		}
+	}
+	if !renamed {
+		if err := osutil.RenameOrCopy(f.CopyRangeMethod.ToFS(), f.mtimefs, f.mtimefs, tempName, file.Name); err != nil {
+			return fmt.Errorf("replacing file: %w", err)
+		}
 	}
 
 	// Set the correct timestamp on the new file
-	f.mtimefs.Chtimes(file.Name, file.ModTime(), file.ModTime()) // never fails
+	var recorded bool
+	if metadataReady {
+		recorded, _ = fs.RecordMtime(f.mtimefs, file.Name, file.ModTime())
+	}
+	if !recorded {
+		f.mtimefs.Chtimes(file.Name, file.ModTime(), file.ModTime()) // never fails
+	}
 
 	// Record the updated file in the index
 	dbUpdateChan <- dbUpdateJob{file, dbUpdateHandleFile}
@@ -1764,7 +1790,7 @@ func (f *sendReceiveFolder) finisherRoutine(ctx context.Context, in <-chan *shar
 			f.queue.Done(state.file.Name)
 
 			if err == nil {
-				err = f.performFinish(state.file, state.curFile, state.hasCurFile, state.tempName, dbUpdateChan, scanChan)
+				err = f.performFinishWithMetadata(state.file, state.curFile, state.hasCurFile, state.tempName, state.metadataReady, dbUpdateChan, scanChan)
 			}
 
 			if err != nil {

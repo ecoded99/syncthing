@@ -11,6 +11,18 @@ which still checks its hash and applies the usual conflict, metadata, and
 per-file durability rules. Encrypted folders and stock peers use ordinary reads.
 There is no direct unpacking over live folders. Batching is disabled by default.
 
+An independent Windows receiver option, **Experimental fast small-file
+finalization**, combines permissions, hidden-attribute removal, and timestamps
+through the already-open output handle. For a new destination it also avoids
+replacement preparation using a same-directory move that refuses to overwrite
+an existing file. Normal integrity checks, file flushes, conflict handling,
+directory syncs, and index publication remain in place. Other platforms,
+unsupported handles, encrypted files, and ownership/xattr synchronization use
+the original metadata path. This option is disabled by default and applies to
+plain files of at most 64 KiB. It works independently of network batching.
+
+See [receiver validation](RECEIVER-PERFORMANCE.md) for measurements and limits.
+
 ## Validation
 
 On a Windows loopback fixture of 8,192 random 16 KiB files (128 MiB), three
