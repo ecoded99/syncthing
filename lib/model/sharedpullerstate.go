@@ -38,6 +38,8 @@ type sharedPullerState struct {
 	sparse        bool
 	created       time.Time
 	fsync         bool
+	fastMetadata  bool
+	metadataReady bool
 
 	// Mutable, must be locked for access
 	err              error           // The first error we hit
@@ -346,6 +348,20 @@ func (s *sharedPullerState) finalClose() (bool, error) {
 		if len(s.file.Encrypted) > 0 {
 			s.failLocked(s.finalizeEncrypted())
 		}
+		if s.fastMetadata && s.err == nil {
+			var mode *fs.FileMode
+			if !s.ignorePerms {
+				m := fs.FileMode(s.file.Permissions & 0o777)
+				mode = &m
+			}
+			s.writer.mut.Lock()
+			ready, err := fs.PrepareFileMetadata(s.writer.fd, mode, s.file.ModTime())
+			s.writer.mut.Unlock()
+			s.metadataReady = ready && err == nil
+			if err != nil {
+				l.Debugf("handle metadata unavailable; using normal finalization: %v", err)
+			}
+		}
 		s.failLocked(s.writer.SyncClose(s.fsync))
 		s.writer = nil
 	}
@@ -356,7 +372,9 @@ func (s *sharedPullerState) finalClose() (bool, error) {
 	// immediately be renamed to the final name. If this is a failed temp
 	// file we will also unhide it, but I'm fine with that as we're now
 	// leaving it around for potentially quite a while.
-	s.fs.Unhide(s.tempName)
+	if !s.metadataReady {
+		s.fs.Unhide(s.tempName)
+	}
 
 	return true, s.err
 }

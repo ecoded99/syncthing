@@ -18,6 +18,8 @@ jobs:
           go-version: '1.27.3'
           cache: true
       - run: go run build.go assets
-      - run: go test ./lib/cloudbackup ./lib/config ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model
+      - run: go test ./lib/cloudbackup ./lib/config ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/fs ./lib/osutil
+      - if: runner.os == 'Windows'
+        run: go test -race ./lib/fs ./lib/model -run 'TestPrepareFileMetadata|TestRecordMtime|TestRenameNew|TestSharedPullerFast'
       - if: runner.os == 'Linux'
         run: go test -race ./lib/cloudbackup ./lib/protocol
