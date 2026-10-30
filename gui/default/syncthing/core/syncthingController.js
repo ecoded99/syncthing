@@ -3313,6 +3313,17 @@ angular.module('syncthing.core')
             }
         };
 
+        $scope.refreshCloudBackup = function () {
+            $http.get(urlbase + '/folder/cloudbackup', {params: {folder: $scope.currentFolder.id}}).then(function (response) {
+                $scope.cloudBackupStatus = response.data;
+            }, $scope.emitHTTPError);
+        };
+        $scope.runCloudBackup = function () {
+            $http.post(urlbase + '/folder/cloudbackup?folder=' + encodeURIComponent($scope.currentFolder.id)).then(function () {
+                $scope.refreshCloudBackup();
+            }, $scope.emitHTTPError);
+        };
+
         $scope.rescanAllFolders = function () {
             $http.post(urlbase + "/db/scan");
         };

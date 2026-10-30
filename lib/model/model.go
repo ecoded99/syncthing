@@ -750,6 +750,7 @@ func (m *model) ConnectionStats() map[string]any {
 				if sec.StartedAt.Before(cs.StartedAt) {
 					cs.StartedAt = sec.StartedAt
 				}
+				cs.BatchRequestsSent += sec.BatchRequestsSent
 				cs.InBytesTotal += sec.InBytesTotal
 				cs.OutBytesTotal += sec.OutBytesTotal
 				cs.Secondary = append(cs.Secondary, sec)
@@ -2466,7 +2467,10 @@ func (m *model) RequestGlobal(ctx context.Context, deviceID protocol.DeviceID, f
 	}
 
 	l.Debugf("%v REQ(out): %s (%s): %q / %q b=%d o=%d s=%d h=%x ft=%t", m, deviceID.Short(), conn, folder, name, blockNo, offset, size, hash, fromTemporary)
-	return conn.Request(ctx, &protocol.Request{Folder: folder, Name: name, BlockNo: blockNo, Offset: offset, Size: size, Hash: hash, FromTemporary: fromTemporary})
+	m.mut.RLock()
+	batch := m.folderCfgs[folder].ExperimentalBatchedTransfers
+	m.mut.RUnlock()
+	return conn.Request(ctx, &protocol.Request{BatchEligible: batch, Folder: folder, Name: name, BlockNo: blockNo, Offset: offset, Size: size, Hash: hash, FromTemporary: fromTemporary})
 }
 
 // requestConnectionForDevice returns a connection to the given device, to

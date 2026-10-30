@@ -18,6 +18,9 @@ const (
 )
 
 type Request struct {
+	// BatchEligible is local only. batchPayload is a negotiated fork extension.
+	BatchEligible bool
+	batchPayload  []byte
 	ID            int
 	Folder        string
 	Name          string
@@ -29,7 +32,7 @@ type Request struct {
 }
 
 func (r *Request) toWire() *bep.Request {
-	return &bep.Request{
+	w := &bep.Request{
 		Id:            int32(r.ID),
 		Folder:        r.Folder,
 		Name:          r.Name,
@@ -39,10 +42,15 @@ func (r *Request) toWire() *bep.Request {
 		FromTemporary: r.FromTemporary,
 		BlockNo:       int32(r.BlockNo),
 	}
+	if len(r.batchPayload) > 0 {
+		setExtension(w, batchRequestField, r.batchPayload)
+	}
+	return w
 }
 
 func requestFromWire(w *bep.Request) *Request {
 	return &Request{
+		batchPayload:  getExtension(w, batchRequestField),
 		ID:            int(w.Id),
 		Folder:        w.Folder,
 		Name:          w.Name,

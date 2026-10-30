@@ -27,6 +27,7 @@ import (
 	"github.com/syncthing/syncthing/internal/slogutil"
 	"github.com/syncthing/syncthing/lib/api"
 	"github.com/syncthing/syncthing/lib/build"
+	"github.com/syncthing/syncthing/lib/cloudbackup"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/connections"
 	"github.com/syncthing/syncthing/lib/connections/registry"
@@ -60,6 +61,7 @@ type Options struct {
 }
 
 type App struct {
+	cloudBackup       *cloudbackup.Service
 	myID              protocol.DeviceID
 	mainService       *suture.Supervisor
 	cfg               config.Wrapper
@@ -256,6 +258,8 @@ func (a *App) startup() error {
 	a.Internals = newInternals(m)
 
 	a.mainService.Add(m)
+	a.cloudBackup = cloudbackup.New(a.cfg)
+	a.mainService.Add(a.cloudBackup)
 
 	// The TLS configuration is used for both the listening socket and outgoing
 	// connections.
@@ -415,7 +419,7 @@ func (a *App) setupGUI(m model.Model, defaultSub, diskSub events.BufferedSubscri
 	summaryService := model.NewFolderSummaryService(a.cfg, m, a.myID, a.evLogger)
 	a.mainService.Add(summaryService)
 
-	apiSvc := api.New(a.myID, a.cfg, locations.Get(locations.GUIAssets), tlsDefaultCommonName, m, defaultSub, diskSub, a.evLogger, discoverer, connectionsService, urService, summaryService, errors, systemLog, a.opts.NoUpgrade, miscDB)
+	apiSvc := api.New(a.myID, a.cfg, locations.Get(locations.GUIAssets), tlsDefaultCommonName, m, defaultSub, diskSub, a.evLogger, discoverer, connectionsService, urService, summaryService, errors, systemLog, a.opts.NoUpgrade, miscDB, a.cloudBackup)
 	a.mainService.Add(apiSvc)
 
 	if err := apiSvc.WaitForStart(); err != nil {

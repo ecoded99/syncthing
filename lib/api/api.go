@@ -45,6 +45,7 @@ import (
 	"github.com/syncthing/syncthing/internal/db"
 	"github.com/syncthing/syncthing/internal/slogutil"
 	"github.com/syncthing/syncthing/lib/build"
+	"github.com/syncthing/syncthing/lib/cloudbackup"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/connections"
 	"github.com/syncthing/syncthing/lib/discover"
@@ -71,6 +72,7 @@ const (
 )
 
 type service struct {
+	cloudBackup *cloudbackup.Service
 	suture.Service
 
 	id                   protocol.DeviceID
@@ -107,12 +109,17 @@ type Service interface {
 	WaitForStart() error
 }
 
-func New(id protocol.DeviceID, cfg config.Wrapper, assetDir, tlsDefaultCommonName string, m model.Model, defaultSub, diskSub events.BufferedSubscription, evLogger events.Logger, discoverer discover.Manager, connectionsService connections.Service, urService *ur.Service, fss model.FolderSummaryService, errors, systemLog slogutil.Recorder, noUpgrade bool, miscDB *db.Typed) Service {
+func New(id protocol.DeviceID, cfg config.Wrapper, assetDir, tlsDefaultCommonName string, m model.Model, defaultSub, diskSub events.BufferedSubscription, evLogger events.Logger, discoverer discover.Manager, connectionsService connections.Service, urService *ur.Service, fss model.FolderSummaryService, errors, systemLog slogutil.Recorder, noUpgrade bool, miscDB *db.Typed, backups ...*cloudbackup.Service) Service {
+	var backup *cloudbackup.Service
+	if len(backups) > 0 {
+		backup = backups[0]
+	}
 	return &service{
-		id:      id,
-		cfg:     cfg,
-		statics: newStaticsServer(cfg.GUI().Theme, assetDir),
-		model:   m,
+		cloudBackup: backup,
+		id:          id,
+		cfg:         cfg,
+		statics:     newStaticsServer(cfg.GUI().Theme, assetDir),
+		model:       m,
 		eventSubs: map[events.EventType]events.BufferedSubscription{
 			DefaultEventMask: defaultSub,
 			DiskEventMask:    diskSub,
@@ -258,32 +265,34 @@ func (s *service) Serve(ctx context.Context) error {
 	restMux.HandlerFunc(http.MethodGet, "/rest/db/need", s.getDBNeed)                         // folder [perpage] [page]
 	restMux.HandlerFunc(http.MethodGet, "/rest/db/remoteneed", s.getDBRemoteNeed)             // device folder [perpage] [page]
 	restMux.HandlerFunc(http.MethodGet, "/rest/db/localchanged", s.getDBLocalChanged)         // folder [perpage] [page]
-	restMux.HandlerFunc(http.MethodGet, "/rest/db/status", s.getDBStatus)                     // folder
-	restMux.HandlerFunc(http.MethodGet, "/rest/db/browse", s.getDBBrowse)                     // folder [prefix] [dirsonly] [levels]
-	restMux.HandlerFunc(http.MethodGet, "/rest/folder/versions", s.getFolderVersions)         // folder
-	restMux.HandlerFunc(http.MethodGet, "/rest/folder/errors", s.getFolderErrors)             // folder [perpage] [page]
-	restMux.HandlerFunc(http.MethodGet, "/rest/folder/pullerrors", s.getFolderErrors)         // folder (deprecated)
-	restMux.HandlerFunc(http.MethodGet, "/rest/events", s.getIndexEvents)                     // [since] [limit] [timeout] [events]
-	restMux.HandlerFunc(http.MethodGet, "/rest/events/disk", s.getDiskEvents)                 // [since] [limit] [timeout]
-	restMux.HandlerFunc(http.MethodGet, "/rest/noauth/health", s.getHealth)                   // -
-	restMux.HandlerFunc(http.MethodGet, "/rest/stats/device", s.getDeviceStats)               // -
-	restMux.HandlerFunc(http.MethodGet, "/rest/stats/folder", s.getFolderStats)               // -
-	restMux.HandlerFunc(http.MethodGet, "/rest/svc/deviceid", s.getDeviceID)                  // id
-	restMux.HandlerFunc(http.MethodGet, "/rest/svc/lang", s.getLang)                          // -
-	restMux.HandlerFunc(http.MethodGet, "/rest/svc/report", s.getReport)                      // -
-	restMux.HandlerFunc(http.MethodGet, "/rest/svc/random/string", s.getRandomString)         // [length]
-	restMux.HandlerFunc(http.MethodGet, "/rest/system/browse", s.getSystemBrowse)             // current
-	restMux.HandlerFunc(http.MethodGet, "/rest/system/connections", s.getSystemConnections)   // -
-	restMux.HandlerFunc(http.MethodGet, "/rest/system/discovery", s.getSystemDiscovery)       // -
-	restMux.HandlerFunc(http.MethodGet, "/rest/system/error", s.getSystemError)               // -
-	restMux.HandlerFunc(http.MethodGet, "/rest/system/paths", s.getSystemPaths)               // -
-	restMux.HandlerFunc(http.MethodGet, "/rest/system/ping", s.restPing)                      // -
-	restMux.HandlerFunc(http.MethodGet, "/rest/system/status", s.getSystemStatus)             // -
-	restMux.HandlerFunc(http.MethodGet, "/rest/system/upgrade", s.getSystemUpgrade)           // -
-	restMux.HandlerFunc(http.MethodGet, "/rest/system/version", s.getSystemVersion)           // -
-	restMux.HandlerFunc(http.MethodGet, "/rest/system/loglevels", s.getSystemDebug)           // -
-	restMux.HandlerFunc(http.MethodGet, "/rest/system/log", s.getSystemLog)                   // [since]
-	restMux.HandlerFunc(http.MethodGet, "/rest/system/log.txt", s.getSystemLogTxt)            // [since]
+	restMux.HandlerFunc(http.MethodGet, "/rest/folder/cloudbackup", s.getCloudBackup)
+	restMux.HandlerFunc(http.MethodPost, "/rest/folder/cloudbackup", s.postCloudBackup)
+	restMux.HandlerFunc(http.MethodGet, "/rest/db/status", s.getDBStatus)                   // folder
+	restMux.HandlerFunc(http.MethodGet, "/rest/db/browse", s.getDBBrowse)                   // folder [prefix] [dirsonly] [levels]
+	restMux.HandlerFunc(http.MethodGet, "/rest/folder/versions", s.getFolderVersions)       // folder
+	restMux.HandlerFunc(http.MethodGet, "/rest/folder/errors", s.getFolderErrors)           // folder [perpage] [page]
+	restMux.HandlerFunc(http.MethodGet, "/rest/folder/pullerrors", s.getFolderErrors)       // folder (deprecated)
+	restMux.HandlerFunc(http.MethodGet, "/rest/events", s.getIndexEvents)                   // [since] [limit] [timeout] [events]
+	restMux.HandlerFunc(http.MethodGet, "/rest/events/disk", s.getDiskEvents)               // [since] [limit] [timeout]
+	restMux.HandlerFunc(http.MethodGet, "/rest/noauth/health", s.getHealth)                 // -
+	restMux.HandlerFunc(http.MethodGet, "/rest/stats/device", s.getDeviceStats)             // -
+	restMux.HandlerFunc(http.MethodGet, "/rest/stats/folder", s.getFolderStats)             // -
+	restMux.HandlerFunc(http.MethodGet, "/rest/svc/deviceid", s.getDeviceID)                // id
+	restMux.HandlerFunc(http.MethodGet, "/rest/svc/lang", s.getLang)                        // -
+	restMux.HandlerFunc(http.MethodGet, "/rest/svc/report", s.getReport)                    // -
+	restMux.HandlerFunc(http.MethodGet, "/rest/svc/random/string", s.getRandomString)       // [length]
+	restMux.HandlerFunc(http.MethodGet, "/rest/system/browse", s.getSystemBrowse)           // current
+	restMux.HandlerFunc(http.MethodGet, "/rest/system/connections", s.getSystemConnections) // -
+	restMux.HandlerFunc(http.MethodGet, "/rest/system/discovery", s.getSystemDiscovery)     // -
+	restMux.HandlerFunc(http.MethodGet, "/rest/system/error", s.getSystemError)             // -
+	restMux.HandlerFunc(http.MethodGet, "/rest/system/paths", s.getSystemPaths)             // -
+	restMux.HandlerFunc(http.MethodGet, "/rest/system/ping", s.restPing)                    // -
+	restMux.HandlerFunc(http.MethodGet, "/rest/system/status", s.getSystemStatus)           // -
+	restMux.HandlerFunc(http.MethodGet, "/rest/system/upgrade", s.getSystemUpgrade)         // -
+	restMux.HandlerFunc(http.MethodGet, "/rest/system/version", s.getSystemVersion)         // -
+	restMux.HandlerFunc(http.MethodGet, "/rest/system/loglevels", s.getSystemDebug)         // -
+	restMux.HandlerFunc(http.MethodGet, "/rest/system/log", s.getSystemLog)                 // [since]
+	restMux.HandlerFunc(http.MethodGet, "/rest/system/log.txt", s.getSystemLogTxt)          // [since]
 
 	// The POST handlers
 	restMux.HandlerFunc(http.MethodPost, "/rest/db/prio", s.postDBPrio)                          // folder file
