@@ -750,6 +750,7 @@ func (m *model) ConnectionStats() map[string]any {
 				if sec.StartedAt.Before(cs.StartedAt) {
 					cs.StartedAt = sec.StartedAt
 				}
+				cs.BatchRequestsSent += sec.BatchRequestsSent
 				cs.InBytesTotal += sec.InBytesTotal
 				cs.OutBytesTotal += sec.OutBytesTotal
 				cs.Secondary = append(cs.Secondary, sec)

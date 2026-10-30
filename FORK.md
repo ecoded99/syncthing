@@ -28,6 +28,12 @@ tests cover negotiation, stock peers, bounds, truncated/corrupt framing,
 per-file errors, cancellation, and retry through ordinary requests after a
 failed extension. The release workflow reruns core suites before signing.
 
+An isolated two-instance smoke test also verified native backup through the
+API, version retention, concurrent-edit conflict convergence with losing content
+retained, and an interrupted receiving process followed by successful resumption
+and SHA-256 verification of 1,024 newly added files. Signed-archive tests reject
+both a modified executable and a renamed version/platform archive.
+
 ## Secondary backup
 
 In Edit Folder > Advanced, choose a separate backup destination already managed

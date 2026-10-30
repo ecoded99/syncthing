@@ -154,3 +154,41 @@ func TestBackupRejectsLinks(t *testing.T) {
 		t.Fatal("outside file modified")
 	}
 }
+
+// An existing read-only backup must remain replaceable on Windows.
+func TestReadOnlyBackupReplacement(t *testing.T) {
+	f, all := fixture(t)
+	source := filepath.Join(f.Path, "file")
+	current := filepath.Join(f.CloudBackup.Path, "Current/file")
+	write(t, source, "before")
+	if err := os.Chmod(source, 0444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		os.Chmod(source, 0600)
+		os.Chmod(current, 0600)
+		filepath.Walk(f.CloudBackup.Path, func(path string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() {
+				os.Chmod(path, 0600)
+			}
+			return nil
+		})
+	})
+	run(t, f, all)
+	os.Chmod(source, 0600)
+	write(t, source, "after")
+	os.Chmod(source, 0444)
+	run(t, f, all)
+	if read(t, current) != "after" {
+		t.Fatal("read-only current was not replaced")
+	}
+}
+func TestVolumeRootOverlap(t *testing.T) {
+	root := string(os.PathSeparator)
+	if volume := filepath.VolumeName(t.TempDir()); volume != "" {
+		root = volume + root
+	}
+	if !overlaps(root, filepath.Join(root, "nested")) {
+		t.Fatal("volume root overlap missed")
+	}
+}

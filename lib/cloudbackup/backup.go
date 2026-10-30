@@ -148,7 +148,7 @@ func normalized(p string) string {
 func overlaps(a, b string) bool {
 	a = normalized(a)
 	b = normalized(b)
-	return a == b || strings.HasPrefix(a, b+string(os.PathSeparator)) || strings.HasPrefix(b, a+string(os.PathSeparator))
+	return a == b || strings.HasPrefix(a, strings.TrimRight(b, string(os.PathSeparator))+string(os.PathSeparator)) || strings.HasPrefix(b, strings.TrimRight(a, string(os.PathSeparator))+string(os.PathSeparator))
 }
 
 // ValidatePaths rejects aliases and overlap before creating or modifying anything.
@@ -175,7 +175,11 @@ func ValidatePaths(f config.FolderConfiguration, folders map[string]config.Folde
 		return "", "", errors.New("backup requires a basic, unencrypted local folder")
 	}
 	for id, other := range folders {
-		path, err := filepath.Abs(other.Path)
+		otherPath, err := stfs.ExpandTilde(other.Path)
+		if err != nil {
+			return "", "", err
+		}
+		path, err := filepath.Abs(otherPath)
 		if err != nil {
 			return "", "", err
 		}
