@@ -241,6 +241,27 @@
         </div>
 
         <div id="folder-advanced" class="tab-pane">
+          <div class="form-group">
+            <label><input type="checkbox" ng-model="currentFolder.experimentalBatchedTransfers" /> Experimental batched small-file transfers</label>
+            <p class="help-block">Groups small-file requests between compatible peers. Normal verification and conflict handling remain active. Stock peers use ordinary transfers. Benchmark before enabling.</p>
+          </div>
+          <fieldset>
+            <legend>Google Drive secondary backup</legend>
+            <label><input type="checkbox" ng-model="currentFolder.cloudBackup.enabled" /> Back up this folder</label>
+            <p class="help-block">Choose a separate folder already synchronized by Google Drive for desktop. Current files are browsable; overwritten content is retained in Versions. Source deletions are retained. Syncthing remains the primary sync engine. Local completion does not confirm cloud upload.</p>
+            <div class="form-group">
+              <label for="cloudBackupPath">Backup destination</label>
+              <input id="cloudBackupPath" class="form-control" type="text" ng-model="currentFolder.cloudBackup.path" ng-required="currentFolder.cloudBackup.enabled" placeholder="Absolute path outside every synchronized folder" />
+            </div>
+            <div class="form-group">
+              <label for="cloudBackupInterval">Backup interval (seconds)</label>
+              <input id="cloudBackupInterval" class="form-control" type="number" min="60" ng-model="currentFolder.cloudBackup.intervalS" ng-required="currentFolder.cloudBackup.enabled" />
+            </div>
+            <button type="button" class="btn btn-default btn-sm" ng-if="editingFolderExisting()" ng-click="refreshCloudBackup()">Refresh backup status</button>
+            <button type="button" class="btn btn-default btn-sm" ng-if="editingFolderExisting()" ng-disabled="!currentFolder.cloudBackup.enabled" ng-click="runCloudBackup()">Run saved backup settings</button>
+            <p class="help-block" ng-if="cloudBackupStatus">{{cloudBackupStatus.state}} · {{cloudBackupStatus.files}} files · {{cloudBackupStatus.bytes | binary}}B <span class="text-danger">{{cloudBackupStatus.error}}</span></p>
+          </fieldset>
+
           <div class="row form-group" ng-class="{'has-error': folderEditor.rescanIntervalS.$invalid && folderEditor.rescanIntervalS.$dirty}">
             <div class="col-md-12">
               <label translate>Scanning</label>

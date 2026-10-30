@@ -47,10 +47,12 @@ func (c *ClusterConfig) toWire() *bep.ClusterConfig {
 	for i, f := range c.Folders {
 		folders[i] = f.toWire()
 	}
-	return &bep.ClusterConfig{
+	w := &bep.ClusterConfig{
 		Folders:   folders,
 		Secondary: c.Secondary,
 	}
+	setExtension(w, batchCapabilityField, []byte{1})
+	return w
 }
 
 func clusterConfigFromWire(w *bep.ClusterConfig) *ClusterConfig {

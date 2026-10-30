@@ -23,6 +23,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"buf.build/go/protovalidate"
@@ -164,6 +165,13 @@ type ConnectionInfo interface {
 }
 
 type rawConnection struct {
+	batchServeMut sync.Mutex
+	peerBatch     atomic.Bool
+	batchMut      sync.Mutex
+	batchPending  []*batchCall
+	batchTimer    *time.Timer
+	batchSent     atomic.Uint64
+
 	ConnectionInfo
 
 	deviceID  DeviceID
@@ -349,6 +357,13 @@ func (c *rawConnection) IndexUpdate(ctx context.Context, idxUp *IndexUpdate) err
 
 // Request returns the bytes for the specified block after fetching them from the connected peer.
 func (c *rawConnection) Request(ctx context.Context, req *Request) ([]byte, error) {
+	if req.BatchEligible && c.peerBatch.Load() && batchable(req) {
+		return c.requestBatched(ctx, req)
+	}
+	return c.requestDirect(ctx, req)
+}
+
+func (c *rawConnection) requestDirect(ctx context.Context, req *Request) ([]byte, error) {
 	select {
 	case <-c.closed:
 		return nil, ErrClosed
@@ -466,6 +481,7 @@ func (c *rawConnection) dispatcherLoop() (err error) {
 
 		switch msg := msg.(type) {
 		case *bep.ClusterConfig:
+			c.peerBatch.Store(bytesEqualVersion(getExtension(msg, batchCapabilityField)))
 			err = c.model.ClusterConfig(clusterConfigFromWire(msg))
 
 		case *bep.Index:
@@ -696,7 +712,13 @@ func checkFilename(name string) error {
 }
 
 func (c *rawConnection) handleRequest(req *Request) {
-	res, err := c.model.Request(req)
+	var res RequestResponse
+	var err error
+	if len(req.batchPayload) > 0 {
+		res, err = c.serveBatch(req)
+	} else {
+		res, err = c.model.Request(req)
+	}
 	if err != nil {
 		if _, ok := errors.AsType[protocolError](err); ok {
 			c.internalClose(err)
@@ -1077,18 +1099,22 @@ func (c *rawConnection) pingReceiver() {
 }
 
 type Statistics struct {
-	At            time.Time `json:"at"`
-	InBytesTotal  int64     `json:"inBytesTotal"`
-	OutBytesTotal int64     `json:"outBytesTotal"`
-	StartedAt     time.Time `json:"startedAt"`
+	BatchRequestsSent uint64    `json:"batchRequestsSent"`
+	PeerSupportsBatch bool      `json:"peerSupportsBatch"`
+	At                time.Time `json:"at"`
+	InBytesTotal      int64     `json:"inBytesTotal"`
+	OutBytesTotal     int64     `json:"outBytesTotal"`
+	StartedAt         time.Time `json:"startedAt"`
 }
 
 func (c *rawConnection) Statistics() Statistics {
 	return Statistics{
-		At:            time.Now().Truncate(time.Second),
-		InBytesTotal:  c.cr.Tot(),
-		OutBytesTotal: c.cw.Tot(),
-		StartedAt:     c.startTime,
+		BatchRequestsSent: c.batchSent.Load(),
+		PeerSupportsBatch: c.peerBatch.Load(),
+		At:                time.Now().Truncate(time.Second),
+		InBytesTotal:      c.cr.Tot(),
+		OutBytesTotal:     c.cw.Tot(),
+		StartedAt:         c.startTime,
 	}
 }
 

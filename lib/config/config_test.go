@@ -77,7 +77,7 @@ func TestDefaultValues(t *testing.T) {
 			MinHomeDiskFree:           Size{1, "%"},
 			URURL:                     "https://data.syncthing.net/newdata",
 			URInitialDelayS:           1800,
-			ReleasesURL:               "https://upgrades.syncthing.net/meta.json",
+			ReleasesURL:               "https://api.github.com/repos/ecoded99/syncthing/releases",
 			AlwaysLocalNets:           []string{},
 			OverwriteRemoteDevNames:   false,
 			TempIndexMinBlocks:        10,
@@ -100,6 +100,7 @@ func TestDefaultValues(t *testing.T) {
 		},
 		Defaults: Defaults{
 			Folder: FolderConfiguration{
+				CloudBackup:      CloudBackupConfiguration{IntervalS: 3600},
 				FilesystemType:   FilesystemTypeBasic,
 				Path:             "",
 				Type:             FolderTypeSendReceive,
@@ -176,6 +177,7 @@ func TestDeviceConfig(t *testing.T) {
 
 		expectedFolders := []FolderConfiguration{
 			{
+				CloudBackup:      CloudBackupConfiguration{IntervalS: 3600},
 				ID:               "test",
 				FilesystemType:   FilesystemTypeBasic,
 				Path:             "testdata",
