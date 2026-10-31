@@ -230,7 +230,7 @@ func (a *Account) finish(ctx context.Context, conf *oauth2.Config, q url.Values,
 		return err
 	}
 	if tok.RefreshToken == "" {
-		return errors.New("Google did not return a refresh token")
+		return errors.New("no refresh token returned by Google")
 	}
 	if err := a.saveToken(tok); err != nil {
 		return err
@@ -303,14 +303,14 @@ func (p *persistingSource) Token() (*oauth2.Token, error) {
 // drive returns an authorized client, or an error when no account is connected.
 func (a *Account) drive(ctx context.Context) (*drive, error) {
 	if a == nil || a.store == nil {
-		return nil, errors.New("Google Drive is not connected")
+		return nil, errors.New("not connected to Google Drive")
 	}
 	s, ok, err := a.store.String(keyToken)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return nil, errors.New("Google Drive is not connected")
+		return nil, errors.New("not connected to Google Drive")
 	}
 	var tok oauth2.Token
 	if err := json.Unmarshal([]byte(s), &tok); err != nil {

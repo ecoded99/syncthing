@@ -61,7 +61,9 @@ func New(cfg config.Wrapper, account *Account, device string, primaryBusy ...fun
 	}
 	return s
 }
-func (*Service) String() string     { return "cloud backup" }
+func (*Service) String() string { return "cloud backup" }
+
+// Account returns the Google account shared by all folder backups.
 func (s *Service) Account() *Account { return s.account }
 func (s *Service) Status(id string) Status {
 	s.mu.RLock()
@@ -537,7 +539,8 @@ func uploadFile(ctx context.Context, src *os.Root, tree *remoteTree, name string
 	if err := checkPrimary(ctx); err != nil {
 		return false, err
 	}
-	in, err := src.Open(name)
+	local := filepath.FromSlash(name)
+	in, err := src.Open(local)
 	if err != nil {
 		return false, err
 	}
@@ -601,7 +604,7 @@ func uploadFile(ctx context.Context, src *os.Root, tree *remoteTree, name string
 	if err != nil {
 		return false, err
 	}
-	latest, err := src.Lstat(name)
+	latest, err := src.Lstat(local)
 	if err != nil {
 		return false, err
 	}

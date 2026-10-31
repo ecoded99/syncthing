@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	folderMime = "application/vnd.google-apps.folder"
-	driveAPI   = "https://www.googleapis.com/drive/v3"
+	folderMime  = "application/vnd.google-apps.folder"
+	driveAPI    = "https://www.googleapis.com/drive/v3"
 	driveFields = "id,name,mimeType,parents,size,md5Checksum,modifiedTime"
 )
 
@@ -29,7 +29,7 @@ const (
 // Chunks must be multiples of 256 KiB. Variables so tests can shrink them.
 var (
 	resumableThreshold int64 = 5 << 20
-	resumableChunk           = 16 << 20
+	resumableChunk     int   = 16 << 20
 )
 
 // driveFile is the subset of Drive file metadata the backup relies on.

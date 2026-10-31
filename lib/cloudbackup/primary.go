@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/syncthing/syncthing/lib/config"
@@ -96,7 +97,7 @@ func uploadWhenIdle(ctx context.Context, src *os.Root, tree *remoteTree, name st
 		}
 		// Directory enumeration may predate a pause. Re-read identity and
 		// metadata after resuming instead of retrying stale source metadata.
-		initial, err := src.Lstat(name)
+		initial, err := src.Lstat(filepath.FromSlash(name))
 		if err != nil {
 			return false, err
 		}
