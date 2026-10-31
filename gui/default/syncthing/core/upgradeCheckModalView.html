@@ -1,0 +1,28 @@
+<modal id="upgradeCheck" status="info" icon="fas fa-sync" heading="{{'Check for Updates' | translate}}" large="no" closeable="yes">
+    <div class="modal-body">
+      <p ng-if="upgradeCheck.checking">
+        <span class="fas fa-spinner fa-spin"></span>&nbsp;<span translate>Checking for updates…</span>
+      </p>
+      <div ng-if="upgradeCheck.done">
+        <p ng-if="upgradeInfo.newer || upgradeInfo.majorNewer">
+          <span translate translate-value-version="{{upgradeInfo.latest}}">Version {%version%} is available.</span>
+          <span translate translate-value-version="{{upgradeInfo.running}}">You are running {%version%}.</span>
+        </p>
+        <p ng-if="upgradeInfo.majorNewer" class="text-danger">
+          <span translate>This is a major version upgrade.</span>
+        </p>
+        <p ng-if="!upgradeInfo.newer && !upgradeInfo.majorNewer">
+          <span class="fas fa-check text-success"></span>&nbsp;<span translate translate-value-version="{{upgradeInfo.running}}">Syncthing is up to date ({%version%}).</span>
+        </p>
+      </div>
+      <p ng-if="upgradeCheck.error" class="text-danger">{{upgradeCheck.error}}</p>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-primary btn-sm" ng-if="upgradeCheck.done && (upgradeInfo.newer || upgradeInfo.majorNewer)" ng-click="upgrade()">
+        <span class="fas fa-arrow-circle-up"></span>&nbsp;<span translate>Upgrade</span>
+      </button>
+      <button type="button" class="btn btn-default btn-sm" data-dismiss="modal">
+        <span class="fas fa-times"></span>&nbsp;<span translate>Close</span>
+      </button>
+    </div>
+  </modal>

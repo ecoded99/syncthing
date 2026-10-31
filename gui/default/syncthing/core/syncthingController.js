@@ -1943,10 +1943,23 @@ angular.module('syncthing.core')
             }
         };
 
+        $scope.checkForUpgrade = function () {
+            $scope.upgradeCheck = { checking: true };
+            showModal('#upgradeCheck');
+            $http.get(urlbase + '/system/upgrade').success(function (data) {
+                $scope.upgradeInfo = data;
+                $scope.upgradeCheck = { done: true };
+            }).error(function (data, status) {
+                var msg = status == 501 ? $translate.instant('Upgrades are disabled in this build.') : (data || $translate.instant('Could not reach the release server.'));
+                $scope.upgradeCheck = { error: String(msg).trim() };
+            });
+        };
+
         $scope.upgrade = function () {
             restarting = true;
             hideModal('#upgrade');
             hideModal('#majorUpgrade');
+            hideModal('#upgradeCheck');
             showModal('#upgrading');
             $http.post(urlbase + '/system/upgrade').success(function () {
                 hideModal('#upgrading');

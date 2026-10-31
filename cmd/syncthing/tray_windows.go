@@ -28,10 +28,12 @@ import (
 	"golang.org/x/sys/windows/svc"
 
 	"github.com/syncthing/syncthing/internal/slogutil"
+	"github.com/syncthing/syncthing/lib/build"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/svcutil"
 	"github.com/syncthing/syncthing/lib/syncthing"
+	"github.com/syncthing/syncthing/lib/upgrade"
 )
 
 //go:embed trayicon.png
@@ -78,6 +80,7 @@ const (
 
 	wmTrayCallback = wmApp + 1
 	wmTrayUpdate   = wmApp + 2
+	wmTrayBalloon  = wmApp + 3
 
 	ninSelect    = 0x0400
 	ninKeySelect = 0x0401
@@ -90,8 +93,12 @@ const (
 	nifMessage   = 0x01
 	nifIcon      = 0x02
 	nifTip       = 0x04
+	nifInfo      = 0x10
 	nifShowTip   = 0x80
 	notifyIconV4 = 4
+
+	niifInfo    = 0x01
+	niifWarning = 0x02
 
 	mfString    = 0x0000
 	mfGrayed    = 0x0001
@@ -110,6 +117,8 @@ const (
 	trayCmdPause
 	trayCmdRestart
 	trayCmdQuit
+	trayCmdCheckUpdate
+	trayCmdInstallUpdate
 	trayCmdFolderBase = 1000
 )
 
@@ -227,6 +236,7 @@ type tray struct {
 	app        *syncthing.App
 	cfg        config.Wrapper
 	canRestart bool
+	canUpgrade bool
 
 	hwnd           windows.HWND
 	taskbarCreated uint32
@@ -236,8 +246,18 @@ type tray struct {
 	status trayStatus
 	shown  trayState
 
+	// Manual update check; guarded by mut.
+	updateBusy string           // menu text while checking or installing
+	newer      *upgrade.Release // found by the last check
+	balloon    trayBalloon
+
 	stop    chan struct{}
 	stopped chan struct{}
+}
+
+type trayBalloon struct {
+	title, text string
+	warn        bool
 }
 
 // The window procedure has no context argument, and there is only ever one
@@ -259,6 +279,7 @@ func (c *serveCmd) startTray(app *syncthing.App, cfg config.Wrapper) func() {
 		app:        app,
 		cfg:        cfg,
 		canRestart: c.InternalInnerProcess,
+		canUpgrade: !upgrade.DisabledByCompilation && !c.NoUpgrade,
 		stop:       make(chan struct{}),
 		stopped:    make(chan struct{}),
 	}
@@ -355,6 +376,9 @@ func trayWndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 	case wmTrayUpdate:
 		t.updateIcon()
 		return 0
+	case wmTrayBalloon:
+		_ = t.notifyIcon(nimModify, nifInfo)
+		return 0
 	case wmClose:
 		t.notifyIcon(nimDelete, 0)
 		procDestroyWindow.Call(hwnd)
@@ -387,6 +411,16 @@ func (t *tray) notifyIcon(op uint32, flags uint32) error {
 		tip := "Syncthing: " + t.status.summary
 		t.mut.Unlock()
 		copyUTF16(nid.Tip[:], tip)
+	}
+	if flags&nifInfo != 0 {
+		t.mut.Lock()
+		copyUTF16(nid.InfoTitle[:], t.balloon.title)
+		copyUTF16(nid.Info[:], t.balloon.text)
+		nid.InfoFlags = niifInfo
+		if t.balloon.warn {
+			nid.InfoFlags = niifWarning
+		}
+		t.mut.Unlock()
 	}
 	if op == nimSetVersion {
 		nid.TimeoutOrVersion = notifyIconV4
@@ -536,6 +570,7 @@ func (t *tray) showMenu() {
 	t.refreshStatus()
 	t.mut.Lock()
 	st := t.status
+	updateBusy, newer := t.updateBusy, t.newer
 	t.mut.Unlock()
 	t.updateIcon()
 
@@ -581,6 +616,16 @@ func (t *tray) showMenu() {
 	} else {
 		appendMenu(menu, mfString, trayCmdPause, "Pause all")
 	}
+	if t.canUpgrade {
+		switch {
+		case updateBusy != "":
+			appendMenu(menu, mfString|mfGrayed, 0, updateBusy)
+		case newer != nil && t.canRestart:
+			appendMenu(menu, mfString, trayCmdInstallUpdate, "Install update "+newer.Tag)
+		default:
+			appendMenu(menu, mfString, trayCmdCheckUpdate, "Check for updates")
+		}
+	}
 	if t.canRestart {
 		appendMenu(menu, mfString, trayCmdRestart, "Restart")
 	}
@@ -594,10 +639,10 @@ func (t *tray) showMenu() {
 		uintptr(pt.X), uintptr(pt.Y), 0, uintptr(t.hwnd), 0)
 	procPostMessageW.Call(uintptr(t.hwnd), wmNull, 0, 0)
 
-	t.runCommand(int(cmd), st)
+	t.runCommand(int(cmd), st, newer)
 }
 
-func (t *tray) runCommand(cmd int, st trayStatus) {
+func (t *tray) runCommand(cmd int, st trayStatus, newer *upgrade.Release) {
 	switch {
 	case cmd == trayCmdOpen:
 		go func() {
@@ -629,6 +674,10 @@ func (t *tray) runCommand(cmd int, st trayStatus) {
 		go t.app.Stop(svcutil.ExitRestart)
 	case cmd == trayCmdQuit:
 		go t.app.Stop(svcutil.ExitSuccess)
+	case cmd == trayCmdCheckUpdate:
+		go t.checkForUpdate()
+	case cmd == trayCmdInstallUpdate && newer != nil:
+		go t.installUpdate(*newer)
 	case cmd >= trayCmdFolderBase && cmd-trayCmdFolderBase < len(st.folders):
 		path := st.folders[cmd-trayCmdFolderBase].path
 		go func() {
@@ -637,6 +686,63 @@ func (t *tray) runCommand(cmd int, st trayStatus) {
 			}
 		}()
 	}
+}
+
+// checkForUpdate asks the release server for the latest release and reports
+// the result in a notification. A newer release is offered in the menu.
+func (t *tray) checkForUpdate() {
+	t.mut.Lock()
+	if t.updateBusy != "" {
+		t.mut.Unlock()
+		return
+	}
+	t.updateBusy = "Checking for updates…"
+	t.mut.Unlock()
+
+	opts := t.cfg.Options()
+	rel, err := upgrade.LatestRelease(opts.ReleasesURL, build.Version, opts.UpgradeToPreReleases)
+
+	t.mut.Lock()
+	t.updateBusy = ""
+	t.newer = nil
+	switch {
+	case err != nil:
+		t.balloon = trayBalloon{"Update check failed", err.Error(), true}
+	case upgrade.CompareVersions(rel.Tag, build.Version) > upgrade.Equal:
+		t.newer = &rel
+		text := "Choose Install update in the Syncthing menu to upgrade."
+		if !t.canRestart {
+			text = "Open Syncthing to upgrade."
+		}
+		t.balloon = trayBalloon{"Syncthing " + rel.Tag + " is available", text, false}
+	default:
+		t.balloon = trayBalloon{"Syncthing is up to date", "You are running " + build.Version + ".", false}
+	}
+	t.mut.Unlock()
+	procPostMessageW.Call(uintptr(t.hwnd), wmTrayBalloon, 0, 0)
+}
+
+// installUpdate replaces the binary and restarts into it, as the GUI's
+// upgrade button does.
+func (t *tray) installUpdate(rel upgrade.Release) {
+	t.mut.Lock()
+	if t.updateBusy != "" {
+		t.mut.Unlock()
+		return
+	}
+	t.updateBusy = "Installing update " + rel.Tag + "…"
+	t.mut.Unlock()
+
+	if err := upgrade.To(rel); err != nil {
+		slog.Error("Failed to upgrade", slogutil.Error(err))
+		t.mut.Lock()
+		t.updateBusy = ""
+		t.balloon = trayBalloon{"Update failed", err.Error(), true}
+		t.mut.Unlock()
+		procPostMessageW.Call(uintptr(t.hwnd), wmTrayBalloon, 0, 0)
+		return
+	}
+	t.app.Stop(svcutil.ExitUpgrade)
 }
 
 func appendMenu(menu, flags, id uintptr, text string) {
