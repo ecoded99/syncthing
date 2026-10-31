@@ -4,6 +4,11 @@ package cloudbackup
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +16,7 @@ import (
 	"time"
 
 	"github.com/syncthing/syncthing/lib/config"
+	"golang.org/x/oauth2"
 )
 
 const testDevice = "DEVICE"
@@ -182,5 +188,101 @@ func TestSourceValidation(t *testing.T) {
 	f.Type = config.FolderTypeReceiveEncrypted
 	if _, err := ValidateSource(f); err == nil {
 		t.Fatal("encrypted folder accepted")
+	}
+}
+
+func fastPace(t *testing.T) {
+	t.Helper()
+	oldMin, oldMax := paceMin, paceMax
+	paceMin, paceMax = time.Millisecond, 4*time.Millisecond
+	t.Cleanup(func() { paceMin, paceMax = oldMin, oldMax })
+}
+
+func TestUploadsRetryRateLimits(t *testing.T) {
+	fastPace(t)
+	d := newFakeDrive(t)
+	d.failUploads = 3
+	f := fixture(t)
+	write(t, filepath.Join(f.Path, "a"), "first")
+	write(t, filepath.Join(f.Path, "b"), "second")
+	r := run(t, d, f)
+	if r.Failed != 0 || current(t, d, r, "a") != "first" || current(t, d, r, "b") != "second" {
+		t.Fatal("rate-limited uploads were not retried", r)
+	}
+}
+
+func TestUploadRetriesAreBounded(t *testing.T) {
+	fastPace(t)
+	d := newFakeDrive(t)
+	d.failUploads = 1000
+	f := fixture(t)
+	write(t, filepath.Join(f.Path, "file"), "x")
+	r, err := Backup(context.Background(), d.client(), f, testDevice, nil)
+	if err == nil || r.Failed != 1 || d.uploads != uploadAttempts+1 {
+		t.Fatal("unexpected retry behaviour", err, r.Failed, d.uploads)
+	}
+}
+
+func TestPermanentUploadErrorIsNotRetried(t *testing.T) {
+	fastPace(t)
+	d := newFakeDrive(t)
+	d.failUploads, d.failStatus = 1, http.StatusBadRequest
+	f := fixture(t)
+	write(t, filepath.Join(f.Path, "file"), "x")
+	r, err := Backup(context.Background(), d.client(), f, testDevice, nil)
+	if err == nil || r.Failed != 1 || d.uploads != 1 {
+		t.Fatal("permanent error retried or not reported", err, r.Failed, d.uploads)
+	}
+}
+
+func TestFailedCountBeyondReportedErrors(t *testing.T) {
+	fastPace(t)
+	d := newFakeDrive(t)
+	d.failUploads, d.failStatus = 1000, http.StatusBadRequest
+	f := fixture(t)
+	for i := range 12 {
+		write(t, filepath.Join(f.Path, fmt.Sprint("file", i)), "x")
+	}
+	r, err := Backup(context.Background(), d.client(), f, testDevice, nil)
+	if r.Failed != 12 || err == nil || !strings.Contains(err.Error(), "2 more errors") {
+		t.Fatal("failure count not reported", r.Failed, err)
+	}
+}
+
+func TestRetryableClassification(t *testing.T) {
+	for _, c := range []struct {
+		err  error
+		want bool
+	}{
+		{&driveError{Status: http.StatusTooManyRequests}, true},
+		{&driveError{Status: http.StatusBadGateway}, true},
+		{&driveError{Status: http.StatusForbidden, Body: "userRateLimitExceeded"}, true},
+		{&driveError{Status: http.StatusForbidden, Body: "insufficientPermissions"}, false},
+		{&driveError{Status: http.StatusBadRequest}, false},
+		{&url.Error{Op: "Post", URL: "u", Err: io.ErrUnexpectedEOF}, true},
+		{&url.Error{Op: "Post", URL: "u", Err: context.Canceled}, false},
+		{&url.Error{Op: "Post", URL: "u", Err: errPrimaryBusy}, false},
+		{&url.Error{Op: "Post", URL: "u", Err: fmt.Errorf("auth: %w", &oauth2.RetrieveError{})}, false},
+		{errors.New("source changed during backup"), false},
+	} {
+		if got := retryable(c.err); got != c.want {
+			t.Errorf("retryable(%v) = %v", c.err, got)
+		}
+	}
+}
+
+func TestPacerBacksOffAndRecovers(t *testing.T) {
+	p := &pacer{}
+	for range 10 {
+		p.failed()
+	}
+	if p.delay != paceMax {
+		t.Fatal("backoff not capped", p.delay)
+	}
+	for range 7 {
+		p.succeeded()
+	}
+	if p.delay != 0 {
+		t.Fatal("pacer did not recover", p.delay)
 	}
 }

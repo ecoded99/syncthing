@@ -278,7 +278,7 @@
             </div>
             <button type="button" class="btn btn-default btn-sm" ng-if="editingFolderExisting()" ng-click="refreshCloudBackup()">Refresh backup status</button>
             <button type="button" class="btn btn-default btn-sm" ng-if="editingFolderExisting()" ng-disabled="!currentFolder.cloudBackup.enabled" ng-click="runCloudBackup()">Run saved backup settings</button>
-            <p class="help-block" ng-if="cloudBackupStatus">{{cloudBackupStatus.state}} &middot; {{cloudBackupStatus.files}} files &middot; {{cloudBackupStatus.bytes | binary}}B <span ng-if="cloudBackupStatus.cloudVerified">&middot; verified in Drive</span> <a ng-if="cloudBackupStatus.driveFolderURL" ng-href="{{cloudBackupStatus.driveFolderURL}}" target="_blank" rel="noopener noreferrer">Open in Google Drive</a> <span class="text-danger">{{cloudBackupStatus.error}}</span></p>
+            <p class="help-block" ng-if="cloudBackupStatus">{{cloudBackupStatus.state}} &middot; {{cloudBackupStatus.files}} files &middot; {{cloudBackupStatus.bytes | binary}}B <span ng-if="cloudBackupStatus.failed">&middot; {{cloudBackupStatus.failed}} failed, retried next run</span> <span ng-if="cloudBackupStatus.cloudVerified">&middot; verified in Drive</span> <a ng-if="cloudBackupStatus.driveFolderURL" ng-href="{{cloudBackupStatus.driveFolderURL}}" target="_blank" rel="noopener noreferrer">Open in Google Drive</a> <span class="text-danger">{{cloudBackupStatus.error}}</span></p>
           </fieldset>
 
           <div class="row form-group" ng-class="{'has-error': folderEditor.rescanIntervalS.$invalid && folderEditor.rescanIntervalS.$dirty}">

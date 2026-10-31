@@ -14,7 +14,10 @@ import (
 	"github.com/syncthing/syncthing/lib/config"
 )
 
-var errPrimaryBusy = errors.New("primary synchronization is active")
+var (
+	errPrimaryBusy = errors.New("primary synchronization is active")
+	errPace        = errors.New("backing off from Google Drive")
+)
 
 type primaryControlKey struct{}
 
@@ -89,8 +92,11 @@ func checkPrimary(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func uploadWhenIdle(ctx context.Context, src *os.Root, tree *remoteTree, name string, versionDir func(context.Context, string) (string, error)) (bool, error) {
-	versioned := false
+// uploadWhenIdle uploads one file, yielding to primary sync and retrying
+// transient Drive failures through the run-wide pacer.
+func uploadWhenIdle(ctx context.Context, src *os.Root, tree *remoteTree, name string, versionDir func(context.Context, string) (string, error), pace *pacer) (bool, error) {
+	versioned, waited := false, false
+	attempts := 0
 	for {
 		if err := waitForPrimary(ctx); err != nil {
 			return false, err
@@ -104,12 +110,26 @@ func uploadWhenIdle(ctx context.Context, src *os.Root, tree *remoteTree, name st
 		if isLink(initial) || !initial.Mode().IsRegular() {
 			return false, fmt.Errorf("source file type changed while backup yielded: %s", name)
 		}
-		changed, err := uploadFile(ctx, src, tree, name, initial, versionDir, &versioned)
-		if !errors.Is(err, errPrimaryBusy) {
+		changed, err := uploadFile(ctx, src, tree, name, initial, versionDir, &versioned, pace, waited)
+		waited = false
+		// In each retried case uploadFile has returned: the source handle is
+		// closed and an aborted request left the existing Drive copy unchanged.
+		switch {
+		case errors.Is(err, errPrimaryBusy):
+		case errors.Is(err, errPace):
+			if err := pace.wait(ctx); err != nil {
+				return false, err
+			}
+			waited = true
+		case retryable(err) && attempts < uploadAttempts:
+			attempts++
+			pace.failed()
+		default:
+			if err == nil && changed {
+				pace.succeeded()
+			}
 			return changed, err
 		}
-		// uploadFile has returned: the source handle is closed and the aborted
-		// request left the existing Drive copy unchanged.
 	}
 }
 
