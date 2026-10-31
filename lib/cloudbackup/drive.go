@@ -62,9 +62,9 @@ func driveTime(t time.Time) string {
 // drive is a minimal Drive v3 client. The caller supplies an authorized HTTP
 // client; with the drive.file scope only files this app created are visible.
 type drive struct {
-	client *http.Client
-	api    string
-	upload string
+	client    *http.Client
+	api       string
+	uploadAPI string
 }
 
 type driveError struct {
@@ -214,7 +214,7 @@ func (d *drive) copy(ctx context.Context, id, name, parent string) error {
 // upload creates a file (id empty) or replaces its content. The body is read
 // exactly once; callers retry by reopening the source.
 func (d *drive) upload(ctx context.Context, id string, meta driveFile, body io.Reader, size int64) (driveFile, error) {
-	method, target := http.MethodPost, d.upload+"/files"
+	method, target := http.MethodPost, d.uploadAPI+"/files"
 	if id != "" {
 		method, target = http.MethodPatch, target+"/"+url.PathEscape(id)
 		// Parents cannot be set on update; the file keeps its location.
