@@ -3318,6 +3318,36 @@ angular.module('syncthing.core')
                 $scope.cloudBackupStatus = response.data;
             }, $scope.emitHTTPError);
         };
+        $scope.googleClient = {};
+        $scope.refreshGoogleAccount = function () {
+            $http.get(urlbase + '/cloudbackup/google').then(function (response) {
+                $scope.googleAccount = response.data;
+                if ($scope.googleAccount.pending) {
+                    setTimeout($scope.refreshGoogleAccount, 2000);
+                }
+            }, $scope.emitHTTPError);
+        };
+        $scope.connectGoogle = function () {
+            // Open the window synchronously so popup blockers allow it.
+            var authWindow = window.open('', '_blank');
+            $http.post(urlbase + '/cloudbackup/google/connect', $scope.googleClient).then(function (response) {
+                $scope.googleClient = {};
+                if (authWindow) {
+                    authWindow.location = response.data.url;
+                } else {
+                    window.location = response.data.url;
+                }
+                $scope.refreshGoogleAccount();
+            }, function (response) {
+                if (authWindow) {
+                    authWindow.close();
+                }
+                $scope.emitHTTPError(response);
+            });
+        };
+        $scope.disconnectGoogle = function () {
+            $http.delete(urlbase + '/cloudbackup/google').then($scope.refreshGoogleAccount, $scope.emitHTTPError);
+        };
         $scope.runCloudBackup = function () {
             $http.post(urlbase + '/folder/cloudbackup?folder=' + encodeURIComponent($scope.currentFolder.id)).then(function () {
                 $scope.refreshCloudBackup();

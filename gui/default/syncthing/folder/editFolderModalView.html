@@ -245,13 +245,32 @@
             <label><input type="checkbox" ng-model="currentFolder.experimentalBatchedTransfers" /> Experimental batched small-file transfers</label>
             <p class="help-block">Groups small-file requests between compatible peers. Normal verification and conflict handling remain active. Stock peers use ordinary transfers. Benchmark before enabling.</p>
           </div>
-          <fieldset>
+          <fieldset ng-init="refreshGoogleAccount()">
             <legend>Google Drive secondary backup</legend>
             <label><input type="checkbox" ng-model="currentFolder.cloudBackup.enabled" /> Back up this folder</label>
-            <p class="help-block">Choose a separate folder already synchronized by Google Drive for desktop. Current files are browsable; overwritten content is retained in Versions. Source deletions are retained. Syncthing remains the primary sync engine. Local completion does not confirm cloud upload.</p>
+            <p class="help-block">Uploads this folder one way into its own Google Drive folder. Current files are browsable; overwritten content is retained in Versions. Source deletions are retained. Syncthing only has access to the folders it creates. Syncthing remains the primary sync engine.</p>
             <div class="form-group">
-              <label for="cloudBackupPath">Backup destination</label>
-              <input id="cloudBackupPath" class="form-control" type="text" ng-model="currentFolder.cloudBackup.path" ng-required="currentFolder.cloudBackup.enabled" placeholder="Absolute path outside every synchronized folder" />
+              <label>Google account</label>
+              <div ng-if="googleAccount.connected">
+                Connected<span ng-if="googleAccount.email"> as {{googleAccount.email}}</span>
+                <button type="button" class="btn btn-default btn-xs" ng-click="disconnectGoogle()">Disconnect</button>
+              </div>
+              <div ng-if="googleAccount && !googleAccount.connected">
+                <div ng-if="!googleAccount.clientConfigured">
+                  <p class="help-block">This build has no Google OAuth client. Create a Desktop app client with the Google Drive API enabled and enter it here.</p>
+                  <input class="form-control" type="text" ng-model="googleClient.clientID" placeholder="OAuth client ID" />
+                  <input class="form-control" type="password" ng-model="googleClient.clientSecret" placeholder="OAuth client secret" />
+                </div>
+                <button type="button" class="btn btn-primary btn-sm" ng-click="connectGoogle()" ng-disabled="!googleAccount.clientConfigured &amp;&amp; !googleClient.clientID">Connect Google Drive</button>
+                <span class="help-block" ng-if="googleAccount.pending">Waiting for authorization in the opened window&hellip;</span>
+                <p class="help-block">Authorize from a browser on this computer; Google returns to a temporary local address.</p>
+              </div>
+              <p class="text-danger" ng-if="googleAccount.error">{{googleAccount.error}}</p>
+            </div>
+            <div class="form-group">
+              <label for="cloudBackupDriveFolder">Drive folder name</label>
+              <input id="cloudBackupDriveFolder" class="form-control" type="text" ng-model="currentFolder.cloudBackup.driveFolderName" placeholder="Syncthing backup - {{currentFolder.label || currentFolder.id}}" />
+              <p class="help-block">Used when the Drive folder is first created. Renaming or moving it in Drive afterwards is safe.</p>
             </div>
             <div class="form-group">
               <label for="cloudBackupInterval">Backup interval (seconds)</label>
@@ -259,7 +278,7 @@
             </div>
             <button type="button" class="btn btn-default btn-sm" ng-if="editingFolderExisting()" ng-click="refreshCloudBackup()">Refresh backup status</button>
             <button type="button" class="btn btn-default btn-sm" ng-if="editingFolderExisting()" ng-disabled="!currentFolder.cloudBackup.enabled" ng-click="runCloudBackup()">Run saved backup settings</button>
-            <p class="help-block" ng-if="cloudBackupStatus">{{cloudBackupStatus.state}} · {{cloudBackupStatus.files}} files · {{cloudBackupStatus.bytes | binary}}B <span class="text-danger">{{cloudBackupStatus.error}}</span></p>
+            <p class="help-block" ng-if="cloudBackupStatus">{{cloudBackupStatus.state}} &middot; {{cloudBackupStatus.files}} files &middot; {{cloudBackupStatus.bytes | binary}}B <span ng-if="cloudBackupStatus.cloudVerified">&middot; verified in Drive</span> <a ng-if="cloudBackupStatus.driveFolderURL" ng-href="{{cloudBackupStatus.driveFolderURL}}" target="_blank" rel="noopener noreferrer">Open in Google Drive</a> <span class="text-danger">{{cloudBackupStatus.error}}</span></p>
           </fieldset>
 
           <div class="row form-group" ng-class="{'has-error': folderEditor.rescanIntervalS.$invalid && folderEditor.rescanIntervalS.$dirty}">

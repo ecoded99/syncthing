@@ -57,9 +57,13 @@ func TestIsDeleted(t *testing.T) {
 		}
 	}
 
+	checker := osutil.NewDeletedChecker(testFs)
 	for _, c := range cases {
 		if osutil.IsDeleted(testFs, c.path) != c.isDel {
 			t.Errorf("IsDeleted(%v) != %v", c.path, c.isDel)
+		}
+		if checker.IsDeleted(c.path) != c.isDel {
+			t.Errorf("DeletedChecker.IsDeleted(%v) != %v", c.path, c.isDel)
 		}
 	}
 }

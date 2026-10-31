@@ -267,6 +267,9 @@ func (s *service) Serve(ctx context.Context) error {
 	restMux.HandlerFunc(http.MethodGet, "/rest/db/localchanged", s.getDBLocalChanged)         // folder [perpage] [page]
 	restMux.HandlerFunc(http.MethodGet, "/rest/folder/cloudbackup", s.getCloudBackup)
 	restMux.HandlerFunc(http.MethodPost, "/rest/folder/cloudbackup", s.postCloudBackup)
+	restMux.HandlerFunc(http.MethodGet, "/rest/cloudbackup/google", s.getGoogleAccount)
+	restMux.HandlerFunc(http.MethodPost, "/rest/cloudbackup/google/connect", s.postGoogleConnect)
+	restMux.HandlerFunc(http.MethodDelete, "/rest/cloudbackup/google", s.deleteGoogleAccount)
 	restMux.HandlerFunc(http.MethodGet, "/rest/db/status", s.getDBStatus)                   // folder
 	restMux.HandlerFunc(http.MethodGet, "/rest/db/browse", s.getDBBrowse)                   // folder [prefix] [dirsonly] [levels]
 	restMux.HandlerFunc(http.MethodGet, "/rest/folder/versions", s.getFolderVersions)       // folder

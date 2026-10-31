@@ -74,18 +74,25 @@ func (s *folderDB) AllLocalFilesBySequence(device protocol.DeviceID, startSeq in
 	return itererr.Map(it, errFn, indirectFI.FileInfo)
 }
 
+// AllLocalFilesWithPrefix does not load block lists; the scan's deletion
+// pass reads every file and never needs them.
 func (s *folderDB) AllLocalFilesWithPrefix(device protocol.DeviceID, prefix string) (iter.Seq[protocol.FileInfo], func() error) {
 	if prefix == "" {
-		return s.AllLocalFiles(device)
+		it, errFn := iterStructs[indirectFI](s.stmt(`
+			SELECT fi.fiprotobuf FROM fileinfos fi
+			INNER JOIN files f on fi.sequence = f.sequence
+			INNER JOIN devices d ON d.idx = f.device_idx
+			WHERE d.device_id = ?
+		`).Queryx(device.String()))
+		return itererr.Map(it, errFn, indirectFI.FileInfo)
 	}
 
 	prefix = osutil.NormalizedFilename(prefix)
 	end := prefixEnd(prefix)
 
 	it, errFn := iterStructs[indirectFI](s.sql.Queryx(`
-		SELECT fi.fiprotobuf, bl.blprotobuf FROM fileinfos fi
+		SELECT fi.fiprotobuf FROM fileinfos fi
 		INNER JOIN files f on fi.sequence = f.sequence
-		LEFT JOIN blocklists bl ON bl.blocklist_hash = f.blocklist_hash
 		INNER JOIN devices d ON d.idx = f.device_idx
 		INNER JOIN file_names n ON f.name_idx = n.idx
 		WHERE d.device_id = ? AND n.name >= ? AND n.name < ?

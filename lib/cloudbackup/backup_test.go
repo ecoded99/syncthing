@@ -4,21 +4,22 @@ package cloudbackup
 
 import (
 	"context"
-	"encoding/json"
-	"github.com/syncthing/syncthing/lib/config"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/syncthing/syncthing/lib/config"
 )
 
-func fixture(t *testing.T) (config.FolderConfiguration, map[string]config.FolderConfiguration) {
+const testDevice = "DEVICE"
+
+func fixture(t *testing.T) config.FolderConfiguration {
 	t.Helper()
-	base := t.TempDir()
-	src := filepath.Join(base, "source")
+	src := filepath.Join(t.TempDir(), "source")
 	os.MkdirAll(filepath.Join(src, ".stfolder"), 0700)
-	f := config.FolderConfiguration{ID: "fixture", Path: src, FilesystemType: config.FilesystemTypeBasic, CloudBackup: config.CloudBackupConfiguration{Enabled: true, Path: filepath.Join(base, "backup")}}
-	return f, map[string]config.FolderConfiguration{f.ID: f}
+	return config.FolderConfiguration{ID: "fixture", Path: src, FilesystemType: config.FilesystemTypeBasic, CloudBackup: config.CloudBackupConfiguration{Enabled: true}}
 }
 func write(t *testing.T, path, data string) {
 	t.Helper()
@@ -29,25 +30,26 @@ func write(t *testing.T, path, data string) {
 		t.Fatal(err)
 	}
 }
-func read(t *testing.T, path string) string {
+func run(t *testing.T, d *fakeDrive, f config.FolderConfiguration) Result {
 	t.Helper()
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(b)
-}
-func run(t *testing.T, f config.FolderConfiguration, all map[string]config.FolderConfiguration) Result {
-	t.Helper()
-	r, err := Backup(context.Background(), f, all, nil)
+	r, err := Backup(context.Background(), d.client(), f, testDevice, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return r
 }
+func current(t *testing.T, d *fakeDrive, r Result, rel string) string {
+	t.Helper()
+	file := d.lookup(r.RootID, "Current/"+rel)
+	if file == nil {
+		t.Fatalf("%s missing from Drive", rel)
+	}
+	return string(file.data)
+}
+
 func TestOneWayVersionsAndIgnores(t *testing.T) {
-	f, all := fixture(t)
-	dst := f.CloudBackup.Path
+	d := newFakeDrive(t)
+	f := fixture(t)
 	write(t, filepath.Join(f.Path, ".stignore"), "node_modules\n.playwright-cli/traces\n")
 	for _, name := range []string{"file", "nested/file", ".hidden", "node_modules/dep"} {
 		write(t, filepath.Join(f.Path, name), "original")
@@ -55,140 +57,130 @@ func TestOneWayVersionsAndIgnores(t *testing.T) {
 	write(t, filepath.Join(f.Path, ".playwright-cli/traces/test"), "excluded")
 	stamp := time.Unix(1700000000, 123456700)
 	os.Chtimes(filepath.Join(f.Path, "file"), stamp, stamp)
-	run(t, f, all)
+	r := run(t, d, f)
 	for _, name := range []string{"file", "nested/file", ".hidden", "node_modules/dep"} {
-		if read(t, filepath.Join(dst, "Current", name)) != "original" {
+		if current(t, d, r, name) != "original" {
 			t.Fatal(name)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(dst, "Current/.playwright-cli/traces/test")); !os.IsNotExist(err) {
-		t.Fatal("trace copied", err)
+	if d.lookup(r.RootID, "Current/.playwright-cli/traces/test") != nil || d.lookup(r.RootID, "Current/.stfolder") != nil {
+		t.Fatal("excluded content uploaded")
 	}
-	info, _ := os.Stat(filepath.Join(dst, "Current/file"))
-	if !info.ModTime().Equal(stamp) {
-		t.Fatal("mtime not preserved", info.ModTime())
+	if got := d.lookup(r.RootID, "Current/file").modified(); !got.Equal(stamp.Truncate(time.Millisecond)) {
+		t.Fatal("mtime not preserved", got)
 	}
-	if r := run(t, f, all); r.Files != 0 {
-		t.Fatal("unchanged files copied", r)
+	if again := run(t, d, f); again.Files != 0 || again.RootID != r.RootID {
+		t.Fatal("unchanged files uploaded or root not reused", again)
 	}
 	write(t, filepath.Join(f.Path, "file"), "changed")
 	os.Remove(filepath.Join(f.Path, "nested/file"))
-	run(t, f, all)
-	if read(t, filepath.Join(dst, "Current/file")) != "changed" || read(t, filepath.Join(dst, "Current/nested/file")) != "original" {
+	run(t, d, f)
+	if current(t, d, r, "file") != "changed" || current(t, d, r, "nested/file") != "original" {
 		t.Fatal("one-way retention failed")
 	}
-	versions, err := filepath.Glob(filepath.Join(dst, "Versions/*/file"))
-	if err != nil || len(versions) != 1 || read(t, versions[0]) != "original" {
-		t.Fatal("old content not versioned", versions, err)
-	}
-	write(t, filepath.Join(dst, "Current/file"), "tampered")
-	run(t, f, all)
-	if read(t, filepath.Join(f.Path, "file")) != "changed" || read(t, filepath.Join(dst, "Current/file")) != "changed" {
-		t.Fatal("backup wrote back to source")
-	}
-}
-func TestBackupGuardsAndCancellation(t *testing.T) {
-	f, all := fixture(t)
-	write(t, filepath.Join(f.Path, "file"), "original")
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := Backup(ctx, f, all, nil); err == nil {
-		t.Fatal("cancelled run succeeded")
-	}
-	if _, err := os.Stat(filepath.Join(f.CloudBackup.Path, "Current/file")); !os.IsNotExist(err) {
-		t.Fatal("cancelled run published file")
-	}
-	original := f.CloudBackup.Path
-	f.CloudBackup.Path = filepath.Join(f.Path, "nested")
-	if _, _, err := ValidatePaths(f, all); err == nil {
-		t.Fatal("overlap allowed")
-	}
-	f.CloudBackup.Path = original
-	other := f
-	other.ID = "other"
-	other.Path = filepath.Dir(original)
-	all[other.ID] = other
-	if _, _, err := ValidatePaths(f, all); err == nil {
-		t.Fatal("another sync folder overlap allowed")
-	}
-	delete(all, other.ID)
-	os.RemoveAll(filepath.Join(f.Path, ".stfolder"))
-	if _, _, err := ValidatePaths(f, all); err == nil {
-		t.Fatal("missing marker allowed")
-	}
-}
-func TestOwnershipMigration(t *testing.T) {
-	f, all := fixture(t)
-	write(t, filepath.Join(f.Path, "file"), "original")
-	write(t, filepath.Join(f.CloudBackup.Path, "Current/retained"), "keep")
-	if _, err := Backup(context.Background(), f, all, nil); err == nil {
-		t.Fatal("unowned nonempty destination adopted")
-	}
-	legacy, _ := json.Marshal(map[string]string{"backup_id": "legacy-id", "source": f.Path})
-	write(t, filepath.Join(f.CloudBackup.Path, ".backup-owner.json"), string(legacy))
-	f.CloudBackup.OwnerID = "wrong"
-	if _, err := Backup(context.Background(), f, all, nil); err == nil {
-		t.Fatal("wrong owner adopted")
-	}
-	f.CloudBackup.OwnerID = "legacy-id"
-	run(t, f, all)
-	if read(t, filepath.Join(f.CloudBackup.Path, "Current/retained")) != "keep" {
-		t.Fatal("migration deleted old file")
-	}
-	f.ID = "different-folder"
-	if _, err := Backup(context.Background(), f, all, nil); err == nil {
-		t.Fatal("ownership stolen")
-	}
-}
-func TestBackupRejectsLinks(t *testing.T) {
-	f, all := fixture(t)
-	outside := filepath.Join(t.TempDir(), "sentinel")
-	write(t, outside, "safe")
-	if err := os.Symlink(outside, filepath.Join(f.Path, "link")); err != nil {
-		t.Skip("symlink unavailable", err)
-	}
-	if _, err := Backup(context.Background(), f, all, nil); err == nil {
-		t.Fatal("followed source symlink")
-	}
-	if read(t, outside) != "safe" {
-		t.Fatal("outside file modified")
+	if v := d.versions(r.RootID, "file"); len(v) != 1 || v[0] != "original" {
+		t.Fatal("previous content not retained in Versions", v)
 	}
 }
 
-// An existing read-only backup must remain replaceable on Windows.
-func TestReadOnlyBackupReplacement(t *testing.T) {
-	f, all := fixture(t)
-	source := filepath.Join(f.Path, "file")
-	current := filepath.Join(f.CloudBackup.Path, "Current/file")
-	write(t, source, "before")
-	if err := os.Chmod(source, 0444); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		os.Chmod(source, 0600)
-		os.Chmod(current, 0600)
-		filepath.Walk(f.CloudBackup.Path, func(path string, info os.FileInfo, err error) error {
-			if err == nil && !info.IsDir() {
-				os.Chmod(path, 0600)
-			}
-			return nil
-		})
-	})
-	run(t, f, all)
-	os.Chmod(source, 0600)
-	write(t, source, "after")
-	os.Chmod(source, 0444)
-	run(t, f, all)
-	if read(t, current) != "after" {
-		t.Fatal("read-only current was not replaced")
+func TestEqualSizeAndTimeChangeIsDetected(t *testing.T) {
+	d := newFakeDrive(t)
+	f := fixture(t)
+	path := filepath.Join(f.Path, "file")
+	stamp := time.Unix(1700000000, 0)
+	write(t, path, "aaaa")
+	os.Chtimes(path, stamp, stamp)
+	r := run(t, d, f)
+	write(t, path, "bbbb")
+	os.Chtimes(path, stamp, stamp)
+	if run(t, d, f).Files != 1 || current(t, d, r, "file") != "bbbb" {
+		t.Fatal("content change with equal size and mtime was missed")
 	}
 }
-func TestVolumeRootOverlap(t *testing.T) {
-	root := string(os.PathSeparator)
-	if volume := filepath.VolumeName(t.TempDir()); volume != "" {
-		root = volume + root
+
+func TestResumableUpload(t *testing.T) {
+	oldThreshold, oldChunk := resumableThreshold, resumableChunk
+	resumableThreshold, resumableChunk = 1024, 1000
+	defer func() { resumableThreshold, resumableChunk = oldThreshold, oldChunk }()
+	d := newFakeDrive(t)
+	f := fixture(t)
+	data := strings.Repeat("0123456789", 350)
+	write(t, filepath.Join(f.Path, "large"), data)
+	r := run(t, d, f)
+	if current(t, d, r, "large") != data {
+		t.Fatal("chunked upload corrupted content")
 	}
-	if !overlaps(root, filepath.Join(root, "nested")) {
-		t.Fatal("volume root overlap missed")
+	write(t, filepath.Join(f.Path, "large"), data+"x")
+	run(t, d, f)
+	if current(t, d, r, "large") != data+"x" || len(d.versions(r.RootID, "large")) != 1 {
+		t.Fatal("chunked update failed")
+	}
+}
+
+func TestRootsAreSeparatedByDeviceAndFolder(t *testing.T) {
+	d := newFakeDrive(t)
+	f := fixture(t)
+	write(t, filepath.Join(f.Path, "file"), "x")
+	a := run(t, d, f)
+	other, err := Backup(context.Background(), d.client(), f, "OTHER", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.RootID == a.RootID {
+		t.Fatal("different devices share a backup root")
+	}
+	d.mu.Lock()
+	name := d.files[a.RootID].Name
+	d.mu.Unlock()
+	if name != "Syncthing backup - fixture" {
+		t.Fatal("unexpected default folder name", name)
+	}
+}
+
+func TestTypeConflictRetainsRemote(t *testing.T) {
+	d := newFakeDrive(t)
+	f := fixture(t)
+	write(t, filepath.Join(f.Path, "entry"), "file")
+	r := run(t, d, f)
+	os.Remove(filepath.Join(f.Path, "entry"))
+	write(t, filepath.Join(f.Path, "entry/child"), "nested")
+	if _, err := Backup(context.Background(), d.client(), f, testDevice, nil); err == nil || !strings.Contains(err.Error(), "conflict") {
+		t.Fatal("type conflict not reported", err)
+	}
+	if current(t, d, r, "entry") != "file" {
+		t.Fatal("conflicting remote file replaced")
+	}
+}
+
+func TestChecksumMismatchIsReported(t *testing.T) {
+	d := newFakeDrive(t)
+	d.corrupt = true
+	f := fixture(t)
+	write(t, filepath.Join(f.Path, "file"), "x")
+	if _, err := Backup(context.Background(), d.client(), f, testDevice, nil); err == nil || !strings.Contains(err.Error(), "checksum") {
+		t.Fatal("checksum mismatch not reported", err)
+	}
+}
+
+func TestQuotaIsChecked(t *testing.T) {
+	d := newFakeDrive(t)
+	d.limit = 4
+	f := fixture(t)
+	write(t, filepath.Join(f.Path, "file"), "too large")
+	if _, err := Backup(context.Background(), d.client(), f, testDevice, nil); err == nil || !strings.Contains(err.Error(), "quota") {
+		t.Fatal("quota not enforced", err)
+	}
+}
+
+func TestSourceValidation(t *testing.T) {
+	f := fixture(t)
+	os.RemoveAll(filepath.Join(f.Path, ".stfolder"))
+	if _, err := ValidateSource(f); err == nil {
+		t.Fatal("missing marker accepted")
+	}
+	f = fixture(t)
+	f.Type = config.FolderTypeReceiveEncrypted
+	if _, err := ValidateSource(f); err == nil {
+		t.Fatal("encrypted folder accepted")
 	}
 }

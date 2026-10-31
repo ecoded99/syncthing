@@ -1,4 +1,4 @@
-> **ecoded experimental fork:** native secondary Google Drive backup, optional batched transfers, and signed fork updates. Read [FORK.md](FORK.md) for setup and measured limitations.
+> **ecoded experimental fork:** one-way Google Drive backup via the Drive API, optional batched transfers, and signed fork updates. Read [FORK.md](FORK.md) for setup and measured limitations.
 
 [![Syncthing][14]][15]
 

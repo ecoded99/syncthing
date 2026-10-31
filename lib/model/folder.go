@@ -754,6 +754,7 @@ func (f *folder) scanSubdirsDeletedAndIgnored(ctx context.Context, subDirs []str
 	var toIgnore []protocol.FileInfo
 	ignoredParent := ""
 	changes := 0
+	deleted := osutil.NewDeletedChecker(f.mtimefs)
 
 outer:
 	for _, sub := range subDirs {
@@ -824,7 +825,7 @@ outer:
 				// it's still here. Simply stat:ing it won't do as there are
 				// tons of corner cases (e.g. parent dir->symlink, missing
 				// permissions)
-				if !osutil.IsDeleted(f.mtimefs, fi.Name) {
+				if !deleted.IsDeleted(fi.Name) {
 					if ignoredParent != "" {
 						// Don't ignore parents of this not ignored item
 						toIgnore = toIgnore[:0]
@@ -933,6 +934,12 @@ func (f *folder) reconcileReceiveOnlyToGlobal(fi protocol.FileInfo, batch *scanB
 		// No global to adopt, or the global item is our own receive-only
 		// change (nothing to reconcile against).
 		return false, nil
+	}
+	// The deletion pass iterates without block lists; compare against the
+	// full local record.
+	fi, ok, err = f.db.GetDeviceFile(f.folderID, protocol.LocalDeviceID, fi.Name)
+	if err != nil || !ok {
+		return false, err
 	}
 	if !gf.IsEquivalentOptional(fi, protocol.FileInfoComparison{
 		ModTimeWindow:   f.modTimeWindow,
