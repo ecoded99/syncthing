@@ -57,6 +57,24 @@ var (
 		Name:      "folder_processed_bytes_total",
 		Help:      "Total amount of data processed during folder syncing, per folder ID and data source (network/local_origin/local_other/skipped)",
 	}, []string{"folder", "source"})
+	metricFolderArchiveFilesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "syncthing",
+		Subsystem: "model",
+		Name:      "archive_files_total",
+		Help:      "Archive-materialized files successfully published and queued for local index update",
+	}, []string{"folder"})
+	metricFolderArchivePhaseSeconds = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "syncthing",
+		Subsystem: "model",
+		Name:      "archive_phase_seconds_total",
+		Help:      "Aggregate elapsed archive-window time in request, materialize (including parent checks), and joined finish phases; excludes ordinary planning and final index-commit wait",
+	}, []string{"folder", "phase"})
+	metricFolderArchiveWorkerSeconds = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "syncthing",
+		Subsystem: "model",
+		Name:      "archive_worker_seconds_total",
+		Help:      "Sum of per-callback elapsed archive materialization time by step; parallel workers overlap, so this is not wall-clock time",
+	}, []string{"folder", "step"})
 
 	metricFolderConflictsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "syncthing",
@@ -67,10 +85,17 @@ var (
 )
 
 const (
-	metricSourceNetwork     = "network"      // from the network
-	metricSourceLocalOrigin = "local_origin" // from the existing version of the local file
-	metricSourceLocalOther  = "local_other"  // from a different local file
-	metricSourceSkipped     = "skipped"      // block of all zeroes, invented out of thin air
+	metricSourceNetwork             = "network"      // from the network
+	metricSourceLocalOrigin         = "local_origin" // from the existing version of the local file
+	metricSourceLocalOther          = "local_other"  // from a different local file
+	metricSourceSkipped             = "skipped"      // block of all zeroes, invented out of thin air
+	metricArchivePhaseRequest       = "request"
+	metricArchivePhaseMaterialize   = "materialize"
+	metricArchivePhaseFinish        = "finish"
+	metricArchiveWorkerVerifyParent = "verify_parent"
+	metricArchiveWorkerTempOpen     = "temp_open"
+	metricArchiveWorkerWrite        = "write"
+	metricArchiveWorkerSyncClose    = "sync_close"
 
 	metricScopeGlobal = "global"
 	metricScopeLocal  = "local"
@@ -96,4 +121,11 @@ func registerFolderMetrics(folderID string) {
 	metricFolderProcessedBytesTotal.WithLabelValues(folderID, metricSourceLocalOther)
 	metricFolderProcessedBytesTotal.WithLabelValues(folderID, metricSourceSkipped)
 	metricFolderConflictsTotal.WithLabelValues(folderID)
+	metricFolderArchiveFilesTotal.WithLabelValues(folderID)
+	for _, phase := range []string{metricArchivePhaseRequest, metricArchivePhaseMaterialize, metricArchivePhaseFinish} {
+		metricFolderArchivePhaseSeconds.WithLabelValues(folderID, phase)
+	}
+	for _, step := range []string{metricArchiveWorkerVerifyParent, metricArchiveWorkerTempOpen, metricArchiveWorkerWrite, metricArchiveWorkerSyncClose} {
+		metricFolderArchiveWorkerSeconds.WithLabelValues(folderID, step)
+	}
 }

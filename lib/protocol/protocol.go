@@ -165,12 +165,16 @@ type ConnectionInfo interface {
 }
 
 type rawConnection struct {
-	batchServeMut sync.Mutex
-	peerBatch     atomic.Bool
-	batchMut      sync.Mutex
-	batchPending  []*batchCall
-	batchTimer    *time.Timer
-	batchSent     atomic.Uint64
+	archiveServeMut      sync.Mutex
+	peerArchive          atomic.Bool
+	archiveRequestsSent  atomic.Uint64
+	archiveResponsesSent atomic.Uint64
+	batchServeMut        sync.Mutex
+	peerBatch            atomic.Bool
+	batchMut             sync.Mutex
+	batchPending         []*batchCall
+	batchTimer           *time.Timer
+	batchSent            atomic.Uint64
 
 	ConnectionInfo
 
@@ -482,6 +486,7 @@ func (c *rawConnection) dispatcherLoop() (err error) {
 		switch msg := msg.(type) {
 		case *bep.ClusterConfig:
 			c.peerBatch.Store(bytesEqualVersion(getExtension(msg, batchCapabilityField)))
+			c.peerArchive.Store(bytesEqualVersion(getExtension(msg, archiveCapabilityField)))
 			err = c.model.ClusterConfig(clusterConfigFromWire(msg))
 
 		case *bep.Index:
@@ -714,7 +719,9 @@ func checkFilename(name string) error {
 func (c *rawConnection) handleRequest(req *Request) {
 	var res RequestResponse
 	var err error
-	if len(req.batchPayload) > 0 {
+	if req.archivePresent {
+		res, err = c.serveArchive(req)
+	} else if len(req.batchPayload) > 0 {
 		res, err = c.serveBatch(req)
 	} else {
 		res, err = c.model.Request(req)
@@ -1099,22 +1106,30 @@ func (c *rawConnection) pingReceiver() {
 }
 
 type Statistics struct {
-	BatchRequestsSent uint64    `json:"batchRequestsSent"`
-	PeerSupportsBatch bool      `json:"peerSupportsBatch"`
-	At                time.Time `json:"at"`
-	InBytesTotal      int64     `json:"inBytesTotal"`
-	OutBytesTotal     int64     `json:"outBytesTotal"`
-	StartedAt         time.Time `json:"startedAt"`
+	// Archive counters record bounded ZIP receipt and successful ZIP production,
+	// respectively, not staging/publication or a completed filesystem transfer.
+	ArchiveRequestsSent  uint64    `json:"archiveRequestsSent"`
+	ArchiveResponsesSent uint64    `json:"archiveResponsesSent"`
+	PeerSupportsArchive  bool      `json:"peerSupportsArchive"`
+	BatchRequestsSent    uint64    `json:"batchRequestsSent"`
+	PeerSupportsBatch    bool      `json:"peerSupportsBatch"`
+	At                   time.Time `json:"at"`
+	InBytesTotal         int64     `json:"inBytesTotal"`
+	OutBytesTotal        int64     `json:"outBytesTotal"`
+	StartedAt            time.Time `json:"startedAt"`
 }
 
 func (c *rawConnection) Statistics() Statistics {
 	return Statistics{
-		BatchRequestsSent: c.batchSent.Load(),
-		PeerSupportsBatch: c.peerBatch.Load(),
-		At:                time.Now().Truncate(time.Second),
-		InBytesTotal:      c.cr.Tot(),
-		OutBytesTotal:     c.cw.Tot(),
-		StartedAt:         c.startTime,
+		ArchiveRequestsSent:  c.archiveRequestsSent.Load(),
+		ArchiveResponsesSent: c.archiveResponsesSent.Load(),
+		PeerSupportsArchive:  c.peerArchive.Load(),
+		BatchRequestsSent:    c.batchSent.Load(),
+		PeerSupportsBatch:    c.peerBatch.Load(),
+		At:                   time.Now().Truncate(time.Second),
+		InBytesTotal:         c.cr.Tot(),
+		OutBytesTotal:        c.cw.Tot(),
+		StartedAt:            c.startTime,
 	}
 }
 

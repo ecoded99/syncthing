@@ -19,16 +19,19 @@ const (
 
 type Request struct {
 	// BatchEligible is local only. batchPayload is a negotiated fork extension.
-	BatchEligible bool
-	batchPayload  []byte
-	ID            int
-	Folder        string
-	Name          string
-	Offset        int64
-	Size          int
-	Hash          []byte
-	FromTemporary bool
-	BlockNo       int
+	BatchEligible  bool
+	batchPayload   []byte
+	archivePayload []byte
+	archivePresent bool
+	archiveMixed   bool
+	ID             int
+	Folder         string
+	Name           string
+	Offset         int64
+	Size           int
+	Hash           []byte
+	FromTemporary  bool
+	BlockNo        int
 }
 
 func (r *Request) toWire() *bep.Request {
@@ -45,20 +48,26 @@ func (r *Request) toWire() *bep.Request {
 	if len(r.batchPayload) > 0 {
 		setExtension(w, batchRequestField, r.batchPayload)
 	}
+	if len(r.archivePayload) > 0 {
+		setExtension(w, archiveRequestField, r.archivePayload)
+	}
 	return w
 }
 
 func requestFromWire(w *bep.Request) *Request {
 	return &Request{
-		batchPayload:  getExtension(w, batchRequestField),
-		ID:            int(w.Id),
-		Folder:        w.Folder,
-		Name:          w.Name,
-		Offset:        w.Offset,
-		Size:          int(w.Size),
-		Hash:          w.Hash,
-		FromTemporary: w.FromTemporary,
-		BlockNo:       int(w.BlockNo),
+		batchPayload:   getExtension(w, batchRequestField),
+		archivePayload: getExtension(w, archiveRequestField),
+		archivePresent: hasExtension(w, archiveRequestField),
+		archiveMixed:   hasExtension(w, archiveRequestField) && hasExtension(w, batchRequestField),
+		ID:             int(w.Id),
+		Folder:         w.Folder,
+		Name:           w.Name,
+		Offset:         w.Offset,
+		Size:           int(w.Size),
+		Hash:           w.Hash,
+		FromTemporary:  w.FromTemporary,
+		BlockNo:        int(w.BlockNo),
 	}
 }
 
