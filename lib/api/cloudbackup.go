@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: MPL-2.0
 package api
 
-import "net/http"
+import (
+	"encoding/json"
+	"io"
+	"net/http"
+
+	"github.com/syncthing/syncthing/lib/cloudbackup"
+)
 
 func (s *service) getCloudBackup(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("folder")
@@ -36,4 +42,49 @@ func (s *service) postCloudBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+func (s *service) googleAccount(w http.ResponseWriter) *cloudbackup.Account {
+	if s.cloudBackup == nil || s.cloudBackup.Account() == nil {
+		http.Error(w, "backup service unavailable", http.StatusServiceUnavailable)
+		return nil
+	}
+	return s.cloudBackup.Account()
+}
+func (s *service) getGoogleAccount(w http.ResponseWriter, _ *http.Request) {
+	if a := s.googleAccount(w); a != nil {
+		sendJSON(w, a.Status())
+	}
+}
+
+// postGoogleConnect starts authorization. The optional body supplies an OAuth
+// client for builds without one: {"clientID": "...", "clientSecret": "..."}.
+func (s *service) postGoogleConnect(w http.ResponseWriter, r *http.Request) {
+	a := s.googleAccount(w)
+	if a == nil {
+		return
+	}
+	var req struct {
+		ClientID     string `json:"clientID"`
+		ClientSecret string `json:"clientSecret"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(io.LimitReader(r.Body, 16<<10)).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	authURL, err := a.Connect(req.ClientID, req.ClientSecret)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	sendJSON(w, map[string]string{"url": authURL})
+}
+func (s *service) deleteGoogleAccount(w http.ResponseWriter, r *http.Request) {
+	if a := s.googleAccount(w); a != nil {
+		if err := a.Disconnect(r.Context()); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
 }

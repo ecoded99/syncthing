@@ -88,7 +88,8 @@ func checkPrimary(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func copyWhenIdle(ctx context.Context, src, dst *os.Root, name, current, version string) (bool, error) {
+func uploadWhenIdle(ctx context.Context, src *os.Root, tree *remoteTree, name string, versionDir func(context.Context, string) (string, error)) (bool, error) {
+	versioned := false
 	for {
 		if err := waitForPrimary(ctx); err != nil {
 			return false, err
@@ -102,12 +103,12 @@ func copyWhenIdle(ctx context.Context, src, dst *os.Root, name, current, version
 		if isLink(initial) || !initial.Mode().IsRegular() {
 			return false, fmt.Errorf("source file type changed while backup yielded: %s", name)
 		}
-		changed, err := copyFile(ctx, src, dst, name, current, version, initial)
+		changed, err := uploadFile(ctx, src, tree, name, initial, versionDir, &versioned)
 		if !errors.Is(err, errPrimaryBusy) {
 			return changed, err
 		}
-		// copyFile has returned: all source/output handles and staging files
-		// are closed/cleaned before waiting. Retain the existing Current copy.
+		// uploadFile has returned: the source handle is closed and the aborted
+		// request left the existing Drive copy unchanged.
 	}
 }
 

@@ -258,7 +258,7 @@ func (a *App) startup() error {
 	a.Internals = newInternals(m)
 
 	a.mainService.Add(m)
-	a.cloudBackup = cloudbackup.New(a.cfg, func() bool {
+	a.cloudBackup = cloudbackup.New(a.cfg, cloudbackup.NewAccount(miscDB), a.myID.String(), func() bool {
 		for id, folder := range a.cfg.Folders() {
 			if folder.Paused {
 				continue

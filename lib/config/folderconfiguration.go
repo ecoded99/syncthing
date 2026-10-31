@@ -47,12 +47,12 @@ type FolderDeviceConfiguration struct {
 }
 
 type CloudBackupConfiguration struct {
-	MinFreeBytes uint64 `json:"minFreeBytes" xml:"minFreeBytes,attr"`
-	Enabled      bool   `json:"enabled" xml:"enabled,attr"`
-	Path         string `json:"path" xml:"path,attr"`
-	IntervalS    int    `json:"intervalS" xml:"intervalS,attr" default:"3600"`
-	// OwnerID permits an explicit migration from the standalone backup prototype.
-	OwnerID string `json:"ownerID,omitempty" xml:"ownerID,attr,omitempty"`
+	Enabled   bool `json:"enabled" xml:"enabled,attr"`
+	IntervalS int  `json:"intervalS" xml:"intervalS,attr" default:"3600"`
+	// DriveFolderName names the Google Drive folder created for this backup.
+	// The folder is found again by its app properties, so renaming it in Drive
+	// is safe; changing this setting does not rename an existing folder.
+	DriveFolderName string `json:"driveFolderName" xml:"driveFolderName,attr"`
 }
 
 type FolderConfiguration struct {
