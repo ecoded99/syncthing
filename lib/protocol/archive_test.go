@@ -127,10 +127,11 @@ func TestArchiveExtensionRouting(t *testing.T) {
 
 type archiveTestModel struct {
 	*TestModel
-	calls  atomic.Int64
-	active atomic.Int64
-	closed atomic.Int64
-	bad    atomic.Bool
+	calls        atomic.Int64
+	active       atomic.Int64
+	closed       atomic.Int64
+	bad          atomic.Bool
+	closedNotify chan struct{}
 }
 
 type archiveTestResponse struct {
@@ -142,7 +143,43 @@ type archiveTestResponse struct {
 func (r *archiveTestResponse) Data() []byte { return r.data }
 func (r *archiveTestResponse) Wait()        {}
 func (r *archiveTestResponse) Close() {
-	r.once.Do(func() { r.model.active.Add(-1); r.model.closed.Add(1); clear(r.data) })
+	r.once.Do(func() {
+		clear(r.data)
+		r.model.active.Add(-1)
+		r.model.closed.Add(1)
+		select {
+		case r.model.closedNotify <- struct{}{}:
+		default:
+		}
+	})
+}
+
+func (m *archiveTestModel) waitClosed(t *testing.T, want int64) {
+	t.Helper()
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	for m.closed.Load() < want {
+		select {
+		case <-m.closedNotify:
+		case <-timer.C:
+			t.Fatalf("normal response lease not released: closed=%d want=%d active=%d", m.closed.Load(), want, m.active.Load())
+		}
+	}
+}
+
+func waitArchiveServerLease(t *testing.T, raw *rawConnection) {
+	t.Helper()
+	released := make(chan struct{})
+	go func() {
+		raw.archiveServeMut.Lock()
+		raw.archiveServeMut.Unlock()
+		close(released)
+	}()
+	select {
+	case <-released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("archive response lease not released after wire delivery")
+	}
 }
 func (m *archiveTestModel) Request(_ Connection, r *Request) (RequestResponse, error) {
 	m.calls.Add(1)
@@ -163,7 +200,7 @@ func (m *archiveTestModel) Request(_ Connection, r *Request) (RequestResponse, e
 func TestArchiveTransportAndImmediateClose(t *testing.T) {
 	ar, aw := io.Pipe()
 	br, bw := io.Pipe()
-	model := &archiveTestModel{TestModel: newTestModel()}
+	model := &archiveTestModel{TestModel: newTestModel(), closedNotify: make(chan struct{}, 1)}
 	c0 := NewConnection(c0ID, ar, bw, testutil.NoopCloser{}, newTestModel(), new(mockedConnectionInfo), CompressionAlways, testKeyGen)
 	c1 := NewConnection(c1ID, br, aw, testutil.NoopCloser{}, model, new(mockedConnectionInfo), CompressionAlways, testKeyGen)
 	c0.Start()
@@ -211,6 +248,11 @@ func TestArchiveTransportAndImmediateClose(t *testing.T) {
 	if raw0.Statistics().ArchiveRequestsSent != 1 || raw1.Statistics().ArchiveResponsesSent != 1 || !raw0.Statistics().PeerSupportsArchive {
 		t.Fatal("archive counters missing")
 	}
+	// Receiving the bytes does not join handleRequest: the server closes its
+	// response only after its writer reports completion. Wait for that lease
+	// before testing another archive's source failure, so a legitimate busy
+	// rejection cannot satisfy the error assertion before reaching the model.
+	waitArchiveServerLease(t, raw1)
 	before := model.calls.Load()
 	raw0.peerArchive.Store(false)
 	if _, err := RequestArchive(ctx, c0, []*Request{archiveFixture("unsupported")}); !errors.Is(err, ErrArchiveUnsupported) {
@@ -238,10 +280,14 @@ func TestArchiveTransportAndImmediateClose(t *testing.T) {
 	for _, capable := range []bool{false, true} {
 		raw0.peerArchive.Store(capable)
 		raw1.peerArchive.Store(capable)
+		closedBefore := model.closed.Load()
 		normalData, err := c0.Request(ctx, archiveFixture(archiveName))
 		if err != nil || string(normalData) != "data" {
 			t.Fatalf("reserved-looking ordinary filename changed behavior (capable=%v): %q %v", capable, normalData, err)
 		}
+		// The mock deliberately allows just one response permit at a time.
+		// Ordinary wire delivery also precedes the server's response Close.
+		model.waitClosed(t, closedBefore+1)
 	}
 	if raw0.Statistics().ArchiveRequestsSent != 1 || raw1.Statistics().ArchiveResponsesSent != 1 {
 		t.Fatal("ordinary request incremented archive counters")
