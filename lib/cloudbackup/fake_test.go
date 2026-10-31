@@ -58,7 +58,7 @@ func newFakeDrive(t *testing.T) *fakeDrive {
 }
 
 func (f *fakeDrive) client() *drive {
-	return &drive{client: f.srv.Client(), api: f.srv.URL + "/drive/v3", upload: f.srv.URL + "/upload/drive/v3"}
+	return &drive{client: f.srv.Client(), api: f.srv.URL + "/drive/v3", uploadAPI: f.srv.URL + "/upload/drive/v3"}
 }
 
 func (f *fakeDrive) id() string { f.next++; return "id" + strconv.Itoa(f.next) }

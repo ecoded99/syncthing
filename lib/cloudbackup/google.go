@@ -321,5 +321,5 @@ func (a *Account) drive(ctx context.Context) (*drive, error) {
 		return nil, err
 	}
 	src := &persistingSource{account: a, src: conf.TokenSource(context.Background(), &tok), last: tok.AccessToken}
-	return &drive{client: oauth2.NewClient(ctx, src), api: a.apiURL, upload: strings.Replace(a.apiURL, "/drive/v3", "/upload/drive/v3", 1)}, nil
+	return &drive{client: oauth2.NewClient(ctx, src), api: a.apiURL, uploadAPI: strings.Replace(a.apiURL, "/drive/v3", "/upload/drive/v3", 1)}, nil
 }
