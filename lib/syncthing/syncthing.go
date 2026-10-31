@@ -33,6 +33,7 @@ import (
 	"github.com/syncthing/syncthing/lib/connections/registry"
 	"github.com/syncthing/syncthing/lib/discover"
 	"github.com/syncthing/syncthing/lib/events"
+	"github.com/syncthing/syncthing/lib/explorerstatus"
 	"github.com/syncthing/syncthing/lib/locations"
 	"github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/osutil"
@@ -271,6 +272,7 @@ func (a *App) startup() error {
 		return false
 	})
 	a.mainService.Add(a.cloudBackup)
+	a.mainService.Add(explorerstatus.New(a.cfg, m, a.evLogger))
 
 	// The TLS configuration is used for both the listening socket and outgoing
 	// connections.

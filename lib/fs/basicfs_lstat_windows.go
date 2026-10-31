@@ -73,6 +73,44 @@ func (fi *dirJunctFileInfo) IsDir() bool {
 	return true
 }
 
+// cloudFileInfo is a Cloud Files placeholder (as used by OneDrive and by
+// Syncthing's own Explorer status) whose data is fully on disk. Go reports
+// every reparse point that is not a link as ModeIrregular, which would make
+// the scanner skip the file, but such a placeholder reads like any other file.
+type cloudFileInfo struct {
+	os.FileInfo
+}
+
+func (fi *cloudFileInfo) Mode() os.FileMode {
+	return fi.FileInfo.Mode() &^ os.ModeIrregular
+}
+
+// ioReparseTagCloud is IO_REPARSE_TAG_CLOUD; the filter uses the variants
+// IO_REPARSE_TAG_CLOUD_1 to _F, which differ in bits 12 to 15.
+const (
+	ioReparseTagCloud     = 0x9000001A
+	ioReparseTagCloudMask = 0xFFFF0FFF
+)
+
+// isLocalCloudFile reports whether fi is a Cloud Files placeholder whose
+// contents are on disk. Placeholders that would be fetched from the cloud on
+// access stay irregular, so scanning never triggers a download.
+func isLocalCloudFile(name string, fi os.FileInfo) bool {
+	if fi.Mode()&os.ModeIrregular == 0 {
+		return false
+	}
+	attrs, ok := fi.Sys().(*syscall.Win32FileAttributeData)
+	if !ok || attrs.FileAttributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+		return false
+	}
+	const remote = windows.FILE_ATTRIBUTE_RECALL_ON_OPEN | windows.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | windows.FILE_ATTRIBUTE_OFFLINE
+	if attrs.FileAttributes&remote != 0 {
+		return false
+	}
+	tag, err := readReparseTag(name)
+	return err == nil && tag&ioReparseTagCloudMask == ioReparseTagCloud
+}
+
 var junctionPointModeMask os.FileMode
 
 func init() {
@@ -99,6 +137,9 @@ func (f *BasicFilesystem) underlyingLstat(name string) (os.FileInfo, error) {
 			if reparseTag, reparseErr := readReparseTag(name); reparseErr == nil && isDirectoryJunction(reparseTag) {
 				return &dirJunctFileInfo{fi}, nil
 			}
+		}
+		if isLocalCloudFile(name, fi) {
+			return &cloudFileInfo{fi}, nil
 		}
 	}
 

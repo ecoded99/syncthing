@@ -57,6 +57,7 @@ type CloudBackupConfiguration struct {
 
 type FolderConfiguration struct {
 	CloudBackup                  CloudBackupConfiguration    `json:"cloudBackup" xml:"cloudBackup"`
+	ExplorerStatus               bool                        `json:"explorerStatus" xml:"explorerStatus,attr" restart:"false"`
 	ExperimentalBatchedTransfers bool                        `json:"experimentalBatchedTransfers" xml:"experimentalBatchedTransfers"`
 	ID                           string                      `json:"id" xml:"id,attr" nodefault:"true"`
 	Label                        string                      `json:"label" xml:"label,attr" restart:"false"`
