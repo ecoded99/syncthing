@@ -341,6 +341,12 @@ func (a *App) startup() error {
 		}
 	}
 
+	// Lowered priority is fine, but EcoQoS throttling convoys file operations
+	// behind NTFS locks held by threads parked on slow cores.
+	if err := osutil.DisablePowerThrottling(); err != nil {
+		slog.Warn("Failed to disable power throttling", slogutil.Error(err))
+	}
+
 	return nil
 }
 
