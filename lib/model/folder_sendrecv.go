@@ -317,6 +317,8 @@ func (f *sendReceiveFolder) processNeeded(ctx context.Context, dbUpdateChan chan
 	var dirDeletions []protocol.FileInfo
 	fileDeletions := map[string]protocol.FileInfo{}
 	buckets := map[string][]protocol.FileInfo{}
+	archives := f.newArchivePullWindow(ctx, dbUpdateChan, copyChan, scanChan)
+	defer archives.flush()
 
 	// Iterate the list of items that we need and sort them into piles.
 	// Regular files to pull goes into the file queue, everything else
@@ -506,7 +508,14 @@ nextFile:
 			continue
 		}
 
-		if err := f.handleFile(ctx, fi, copyChan); err != nil {
+		if archives != nil && archiveFileEligible(fi) {
+			state, err := f.prepareFile(ctx, fi)
+			if err != nil {
+				f.newPullError(fileName, err)
+			} else {
+				archives.add(state)
+			}
+		} else if err := f.handleFile(ctx, fi, copyChan); err != nil {
 			f.newPullError(fileName, err)
 		}
 	}
@@ -1155,9 +1164,20 @@ func (f *sendReceiveFolder) renameFile(cur, source, target protocol.FileInfo, db
 // handleFile queues the copies and pulls as necessary for a single new or
 // changed file.
 func (f *sendReceiveFolder) handleFile(ctx context.Context, file protocol.FileInfo, copyChan chan<- copyBlocksState) error {
-	curFile, hasCurFile, err := f.model.sdb.GetDeviceFile(f.folderID, protocol.LocalDeviceID, file.Name)
+	state, err := f.prepareFile(ctx, file)
 	if err != nil {
 		return err
+	}
+	copyChan <- state
+	return nil
+}
+
+// prepareFile retains the normal temporary-file reuse, permissions and event
+// preparation for both ordinary pulls and the optional archive transport.
+func (f *sendReceiveFolder) prepareFile(ctx context.Context, file protocol.FileInfo) (copyBlocksState, error) {
+	curFile, hasCurFile, err := f.model.sdb.GetDeviceFile(f.folderID, protocol.LocalDeviceID, file.Name)
+	if err != nil {
+		return copyBlocksState{}, err
 	}
 
 	have, _ := blockDiff(curFile.Blocks, file.Blocks)
@@ -1202,8 +1222,7 @@ func (f *sendReceiveFolder) handleFile(ctx context.Context, file protocol.FileIn
 		have:              len(have),
 	}
 
-	copyChan <- cs
-	return nil
+	return cs, nil
 }
 
 func (f *sendReceiveFolder) reuseBlocks(ctx context.Context, blocks []protocol.BlockInfo, reused []int, file protocol.FileInfo, tempName string) ([]protocol.BlockInfo, []int) {
@@ -1770,6 +1789,9 @@ func (f *sendReceiveFolder) finisherRoutine(ctx context.Context, in <-chan *shar
 			if err != nil {
 				f.newPullError(state.file.Name, fmt.Errorf("finishing: %w", err))
 			} else {
+				if state.archiveMaterialized {
+					metricFolderArchiveFilesTotal.WithLabelValues(f.folderID).Inc()
+				}
 				slog.InfoContext(ctx, "Synced file", f.LogAttr(), state.file.LogAttr(), slog.Group("blocks", slog.Int("local", state.reused+state.copyTotal), slog.Int("download", state.pullTotal)))
 
 				minBlocksPerBlock := state.file.BlockSize() / protocol.MinBlockSize

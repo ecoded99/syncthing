@@ -23,7 +23,7 @@ jobs:
         run: |
           if ($env:GITHUB_REF_NAME -notmatch '^v\d+\.\d+\.\d+-ecoded\.\d+$') { throw 'Invalid fork version' }
       - run: go run build.go assets
-      - run: go test ./lib/cloudbackup ./lib/config ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model
+      - run: go test ./lib/archivebatch ./lib/cloudbackup ./lib/config ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model
       - name: Build Windows amd64
         shell: pwsh
         run: |

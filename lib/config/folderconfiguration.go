@@ -58,6 +58,7 @@ type CloudBackupConfiguration struct {
 type FolderConfiguration struct {
 	CloudBackup                  CloudBackupConfiguration    `json:"cloudBackup" xml:"cloudBackup"`
 	ExperimentalBatchedTransfers bool                        `json:"experimentalBatchedTransfers" xml:"experimentalBatchedTransfers"`
+	ExperimentalArchiveTransfers bool                        `json:"experimentalArchiveTransfers" xml:"experimentalArchiveTransfers"`
 	ID                           string                      `json:"id" xml:"id,attr" nodefault:"true"`
 	Label                        string                      `json:"label" xml:"label,attr" restart:"false"`
 	FilesystemType               FilesystemType              `json:"filesystemType" xml:"filesystemType" default:"basic"`
@@ -193,8 +194,13 @@ func (f *FolderConfiguration) CreateMarker() error {
 	// Sync & hide the containing directory
 	if dir, err := ffs.Open("."); err != nil {
 		l.Debugln("folder marker: open . failed:", err)
-	} else if err := dir.Sync(); err != nil {
-		l.Debugln("folder marker: fsync . failed:", err)
+	} else {
+		if err := dir.Sync(); err != nil {
+			l.Debugln("folder marker: fsync . failed:", err)
+		}
+		if err := dir.Close(); err != nil {
+			l.Debugln("folder marker: close . failed:", err)
+		}
 	}
 	ffs.Hide(DefaultMarkerName)
 

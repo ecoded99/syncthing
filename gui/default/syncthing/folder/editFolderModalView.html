@@ -245,6 +245,10 @@
             <label><input type="checkbox" ng-model="currentFolder.experimentalBatchedTransfers" /> Experimental batched small-file transfers</label>
             <p class="help-block">Groups small-file requests between compatible peers. Normal verification and conflict handling remain active. Stock peers use ordinary transfers. Benchmark before enabling.</p>
           </div>
+          <div class="form-group">
+            <label><input type="checkbox" ng-model="currentFolder.experimentalArchiveTransfers" /> Experimental archive transfers</label>
+            <p class="help-block">Transfers groups of changed small files as archives between compatible peers. This feature is under validation and is disabled by default.</p>
+          </div>
           <fieldset>
             <legend>Google Drive secondary backup</legend>
             <label><input type="checkbox" ng-model="currentFolder.cloudBackup.enabled" /> Back up this folder</label>

@@ -52,6 +52,7 @@ func (c *ClusterConfig) toWire() *bep.ClusterConfig {
 		Secondary: c.Secondary,
 	}
 	setExtension(w, batchCapabilityField, []byte{1})
+	setExtension(w, archiveCapabilityField, []byte{1})
 	return w
 }
 

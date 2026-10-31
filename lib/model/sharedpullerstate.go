@@ -40,18 +40,19 @@ type sharedPullerState struct {
 	fsync         bool
 
 	// Mutable, must be locked for access
-	err              error           // The first error we hit
-	writer           *lockedWriterAt // Wraps fd to prevent fd closing at the same time as writing
-	copyTotal        int             // Total number of copy actions for the whole job
-	pullTotal        int             // Total number of pull actions for the whole job
-	copyOrigin       int             // Number of blocks copied from the original file
-	copyNeeded       int             // Number of copy actions still pending
-	pullNeeded       int             // Number of block pulls still pending
-	updated          time.Time       // Time when any of the counters above were last updated
-	closed           bool            // True if the file has been finalClosed.
-	available        []int           // Indexes of the blocks that are available in the temporary file
-	availableUpdated time.Time       // Time when list of available blocks was last updated
-	mut              sync.RWMutex    // Protects the above
+	err                 error           // The first error we hit
+	writer              *lockedWriterAt // Wraps fd to prevent fd closing at the same time as writing
+	copyTotal           int             // Total number of copy actions for the whole job
+	pullTotal           int             // Total number of pull actions for the whole job
+	copyOrigin          int             // Number of blocks copied from the original file
+	copyNeeded          int             // Number of copy actions still pending
+	pullNeeded          int             // Number of block pulls still pending
+	updated             time.Time       // Time when any of the counters above were last updated
+	closed              bool            // True if the file has been finalClosed.
+	archiveMaterialized bool            // Verified archive data was already SyncClosed in the ordinary temp file.
+	available           []int           // Indexes of the blocks that are available in the temporary file
+	availableUpdated    time.Time       // Time when list of available blocks was last updated
+	mut                 sync.RWMutex    // Protects the above
 }
 
 func newSharedPullerState(file protocol.FileInfo, fs fs.Filesystem, folderID, tempName string, blocks []protocol.BlockInfo, reused []int, ignorePerms, hasCurFile bool, curFile protocol.FileInfo, sparse bool, fsync bool) *sharedPullerState {
@@ -332,7 +333,7 @@ func (s *sharedPullerState) finalClose() (bool, error) {
 		return false, nil
 	}
 
-	if s.writer == nil && s.err == nil {
+	if s.writer == nil && s.err == nil && !s.archiveMaterialized {
 		// If we didn't even create a temp file up to this point, now is the
 		// time to do so. This also truncates the file to the correct size
 		// if we're using sparse file. If we already errored there's nothing
@@ -359,6 +360,21 @@ func (s *sharedPullerState) finalClose() (bool, error) {
 	s.fs.Unhide(s.tempName)
 
 	return true, s.err
+}
+
+// closeArchiveTemp closes the ordinary temporary-file writer after the archive
+// callback has written and verified its complete single block. Publication still
+// belongs to finisherRoutine; this does not claim finalClose or update the index.
+func (s *sharedPullerState) closeArchiveTemp(complete bool) error {
+	s.mut.Lock()
+	defer s.mut.Unlock()
+	if s.closed || s.writer == nil || s.archiveMaterialized {
+		return fmt.Errorf("archive temporary-file writer is not owned by this state")
+	}
+	err := s.writer.SyncClose(s.fsync)
+	s.writer = nil
+	s.archiveMaterialized = complete && err == nil
+	return err
 }
 
 // finalizeEncrypted adds a trailer to the encrypted file containing the

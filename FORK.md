@@ -34,6 +34,35 @@ retained, and an interrupted receiving process followed by successful resumption
 and SHA-256 verification of 1,024 newly added files. Signed-archive tests reject
 both a modified executable and a renamed version/platform archive.
 
+## Native archive receiver (under development)
+
+The separate `experimentalArchiveTransfers` folder option requests sender-created
+ZIPs of changed small files over authenticated BEP, then validates and extracts
+them into ordinary Syncthing temporary files using up to eight workers. Windows
+are bounded to 1,024 files and 16 MiB. Original conflict, version, permissions,
+publication and index processing remain in place. Unsupported peers, encrypted
+folders and reusable temporary blocks use the ordinary path. This option is
+disabled by default and is distinct from the older 32-request transport above.
+
+The integrated path passed real-BEP initial/update/delete tests with complete
+SHA256, timestamp and need-zero verification, including 8,192-file loopback and
+2,048-file cross-PC workloads. Corruption, cancellation, missing parents, local
+edits, temporary-file resumption and unsupported peers have targeted tests.
+Archive package, protocol and receiver concurrency tests passed race checks.
+
+One matched Windows/Tailscale screen of 2,048 random 16 KiB files (32 MiB), with
+normal CPU/I/O/memory priority and fsync enabled, completed at 1.02 decimal MB/s
+with archives and 0.87 MB/s with ordinary requests. Including independent full
+readback verification, rates were 0.96 and 0.82 MB/s respectively. This single
+comparison does not establish a general performance gain and does not meet the
+10 MB/s target. Archive fetching took 2.78 seconds, materialization 17.41 seconds,
+and original finalization 8.56 seconds. A separate below-normal-priority run was
+excluded. No archive build has been released or installed in production.
+
+See `lib/model/archive.md` and `lib/protocol/archive.md` for semantics and
+observability. Worker-step counters sum parallel callback time and must not be
+mistaken for wall-clock phase percentages.
+
 ## Secondary backup
 
 In Edit Folder > Advanced, choose a separate backup destination already managed
