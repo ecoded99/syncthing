@@ -66,7 +66,8 @@ var (
 	// DefaultDiscoveryServers should be substituted when the configuration
 	// contains <globalAnnounceServer>default</globalAnnounceServer>.
 	DefaultDiscoveryServers = append(DefaultDiscoveryServersV4, DefaultDiscoveryServersV6...)
-	// DefaultTheme is the default and fallback theme for the web UI.
+	// DefaultTheme is the fallback theme for web UI assets a theme does
+	// not override. New configurations default to the "modern" theme.
 	DefaultTheme = "default"
 	// Default stun servers should be substituted when the configuration
 	// contains <stunServer>default</stunServer>.

@@ -29,7 +29,7 @@ type GUIConfiguration struct {
 	RawUseTLS                 bool     `json:"useTLS" xml:"tls,attr"`
 	APIKey                    string   `json:"apiKey" xml:"apikey,omitempty"`
 	InsecureAdminAccess       bool     `json:"insecureAdminAccess" xml:"insecureAdminAccess,omitempty"`
-	Theme                     string   `json:"theme" xml:"theme" default:"default"`
+	Theme                     string   `json:"theme" xml:"theme" default:"modern"`
 	InsecureSkipHostCheck     bool     `json:"insecureSkipHostcheck" xml:"insecureSkipHostcheck,omitempty"`
 	InsecureAllowFrameLoading bool     `json:"insecureAllowFrameLoading" xml:"insecureAllowFrameLoading,omitempty"`
 	SendBasicAuthPrompt       bool     `json:"sendBasicAuthPrompt" xml:"sendBasicAuthPrompt,attr"`
