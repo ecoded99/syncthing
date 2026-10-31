@@ -252,6 +252,9 @@ func (a *App) startup() error {
 		slog.Warn("Failed to perform global migration", slogutil.Error(err))
 		return err
 	}
+	if err := applyModernTheme(a.sdb, a.cfg); err != nil {
+		slog.Warn("Failed to switch to the modern theme", slogutil.Error(err))
+	}
 
 	keyGen := protocol.NewKeyGenerator()
 	m := model.NewModel(a.cfg, a.myID, a.sdb, protectedFiles, a.evLogger, keyGen)

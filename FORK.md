@@ -126,6 +126,14 @@ That mode is removed; its `path`, `minFreeBytes` and `ownerID` settings are
 ignored, and existing copies are left untouched. The first Drive API run
 uploads everything again.
 
+## Modern theme
+
+The web UI uses the `modern` theme by default. New configurations get it
+directly; on first start after updating, an install still on the stock
+`default` theme is switched to `modern` once (recorded in the database as
+`forkModernThemeApplied`). A theme picked in Settings afterwards, including
+`default`, is kept.
+
 ## Signed automatic updates
 
 The feed is `https://api.github.com/repos/ecoded99/syncthing/releases`. Enable
