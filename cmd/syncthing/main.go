@@ -615,7 +615,10 @@ func (c *serveCmd) syncthingMain() {
 		}()
 	}
 
+	stopTray := c.startTray(app, cfgWrapper)
+
 	status := app.Wait()
+	stopTray()
 
 	if status == svcutil.ExitError {
 		slog.Error("Syncthing stopped with error", slogutil.Error(app.Error()))

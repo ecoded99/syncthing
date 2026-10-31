@@ -8,4 +8,5 @@ package main
 
 type buildSpecificOptions struct {
 	HideConsole bool `name:"no-console" help:"Hide console window (Always enabled on Windows 11 24H2 and later)" env:"STHIDECONSOLE"`
+	NoTray      bool `name:"no-tray" help:"Do not show the notification area (tray) icon" env:"STNOTRAY"`
 }
