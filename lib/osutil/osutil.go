@@ -144,6 +144,66 @@ func IsDeleted(ffs fs.Filesystem, name string) bool {
 	return false
 }
 
+// DeletedChecker answers IsDeleted for many files in one pass, checking each
+// parent directory once instead of once for every file below it.
+type DeletedChecker struct {
+	fs   fs.Filesystem
+	dirs map[string]dirCheck
+}
+
+type dirCheck struct {
+	err  error // what TraversesSymlink returns for this directory
+	done bool  // a component at or above this directory ended the walk
+}
+
+func NewDeletedChecker(ffs fs.Filesystem) *DeletedChecker {
+	return &DeletedChecker{fs: ffs, dirs: make(map[string]dirCheck)}
+}
+
+func (c *DeletedChecker) IsDeleted(name string) bool {
+	if _, err := c.fs.Lstat(name); err != nil {
+		if fs.IsNotExist(err) || fs.IsErrCaseConflict(err) {
+			return true
+		}
+	}
+	dir, err := fs.Canonicalize(filepath.Dir(name))
+	if err == nil {
+		err = c.check(dir).err
+	}
+	switch err.(type) {
+	case *NotADirectoryError, *TraversesSymlinkError:
+		return true
+	}
+	return false
+}
+
+// check mirrors TraversesSymlink for a canonical directory, reusing the
+// results for its parents.
+func (c *DeletedChecker) check(dir string) dirCheck {
+	if dir == "." {
+		return dirCheck{}
+	}
+	if r, ok := c.dirs[dir]; ok {
+		return r
+	}
+	r := c.check(filepath.Dir(dir))
+	if !r.done {
+		info, err := c.fs.Lstat(dir)
+		switch {
+		case fs.IsNotExist(err):
+			r = dirCheck{done: true}
+		case err != nil:
+			r = dirCheck{err: err, done: true}
+		case info.IsSymlink():
+			r = dirCheck{err: &TraversesSymlinkError{path: dir}, done: true}
+		case !info.IsDir():
+			r = dirCheck{err: &NotADirectoryError{path: dir}, done: true}
+		}
+	}
+	c.dirs[dir] = r
+	return r
+}
+
 func DirSize(location string) int64 {
 	entries, err := os.ReadDir(location)
 	if err != nil {
