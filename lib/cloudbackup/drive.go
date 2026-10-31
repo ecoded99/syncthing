@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/oauth2"
 )
 
 const (
@@ -84,7 +86,52 @@ func retryable(err error) bool {
 		return de.Status == http.StatusTooManyRequests || de.Status >= 500 ||
 			de.Status == http.StatusForbidden && (strings.Contains(de.Body, "rateLimitExceeded") || strings.Contains(de.Body, "userRateLimitExceeded"))
 	}
-	return false
+	// Dropped connections and timeouts are transient. Cancellation, yielding
+	// to primary sync and authorization failures are not.
+	var ue *url.Error
+	var re *oauth2.RetrieveError
+	return errors.As(err, &ue) && !errors.As(err, &re) && !errors.Is(err, context.Canceled) &&
+		!errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, errPrimaryBusy)
+}
+
+// Bounds of the run-wide upload backoff. Variables so tests can shrink them.
+var (
+	paceMin = time.Second
+	paceMax = 64 * time.Second
+)
+
+// uploadAttempts bounds retries of one file before it is reported and left
+// for the next run.
+const uploadAttempts = 8
+
+// pacer slows the whole run while Drive reports rate limits or server errors,
+// so the following files wait too instead of failing one after another.
+type pacer struct {
+	delay time.Duration
+}
+
+func (p *pacer) wait(ctx context.Context) error {
+	if p.delay == 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(p.delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (p *pacer) failed() { p.delay = min(max(p.delay*2, paceMin), paceMax) }
+
+// succeeded recovers gradually, so a sustained limit is not hit again at once.
+func (p *pacer) succeeded() {
+	p.delay /= 2
+	if p.delay < paceMin {
+		p.delay = 0
+	}
 }
 
 func withRetry(ctx context.Context, fn func() error) error {

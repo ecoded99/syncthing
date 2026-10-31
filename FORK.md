@@ -81,8 +81,15 @@ and the status reports `complete` with `cloudVerified` only when every file in
 the run verified. Unchanged files are detected by size, modification time and
 MD5, so a run still reads every file locally. Overwritten files are first
 copied server-side into `Versions`. Files of 5 MiB or more use resumable
-uploads. Rate limits and server errors are retried with backoff. Free Drive
-quota is checked before each upload.
+uploads. Free Drive quota is checked before each upload.
+
+Rate limits, server errors and dropped connections slow the whole run down
+rather than skipping files: the delay before each upload doubles from one
+second up to 64 seconds and halves again after each success. A file is retried
+up to eight times, without holding the source open while waiting, before it is
+reported and left for the next run. Other errors, such as a revoked
+authorization, are not retried. The status counts files left for the next run
+(`failed`), and lists the first ten errors.
 
 Backups include dependencies and files ignored by primary sync. Only Playwright
 traces and internal Syncthing state are excluded. Links and junctions are

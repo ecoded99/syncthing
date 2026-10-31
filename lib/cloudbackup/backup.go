@@ -36,6 +36,7 @@ type Status struct {
 	Finished time.Time `json:"finished,omitempty"`
 	Files    int64     `json:"files"`
 	Bytes    int64     `json:"bytes"`
+	Failed   int64     `json:"failed"`
 	Error    string    `json:"error,omitempty"`
 	// CloudVerified is set when every file in the run was uploaded and Drive
 	// reported the same MD5 checksum as the local content.
@@ -122,7 +123,7 @@ func (s *Service) Serve(ctx context.Context) error {
 		d, err := s.account.drive(runCtx)
 		if err == nil {
 			result, err = Backup(runCtx, d, f, s.device, func(r Result) {
-				st.Files, st.Bytes = r.Files, r.Bytes
+				st.Files, st.Bytes, st.Failed = r.Files, r.Bytes, r.Failed
 				if r.RootID != "" {
 					st.DriveFolderURL = folderURL(r.RootID)
 				}
@@ -131,6 +132,7 @@ func (s *Service) Serve(ctx context.Context) error {
 		}
 		st.Files = result.Files
 		st.Bytes = result.Bytes
+		st.Failed = result.Failed
 		if result.RootID != "" {
 			st.DriveFolderURL = folderURL(result.RootID)
 		}
@@ -179,6 +181,8 @@ func folderURL(id string) string { return "https://drive.google.com/drive/folder
 
 type Result struct {
 	Files, Bytes int64
+	// Failed counts files and directories left for the next run.
+	Failed int64
 	// RootID is the Drive folder holding Current and Versions.
 	RootID string
 }
@@ -428,10 +432,12 @@ func Backup(ctx context.Context, d *drive, f config.FolderConfiguration, device 
 	}
 	var fileErrors []error
 	recordError := func(err error) {
+		result.Failed++
 		if len(fileErrors) < 10 {
 			fileErrors = append(fileErrors, err)
 		}
 	}
+	pace := &pacer{}
 	err = fs.WalkDir(source.FS(), ".", func(name string, de fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			recordError(walkErr)
@@ -483,12 +489,15 @@ func Backup(ctx context.Context, d *drive, f config.FolderConfiguration, device 
 		if available >= 0 && info.Size() > available {
 			return errors.New("google drive storage quota exhausted")
 		}
-		changed, err := uploadWhenIdle(ctx, source, tree, name, versionDir)
+		changed, err := uploadWhenIdle(ctx, source, tree, name, versionDir, pace)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			recordError(fmt.Errorf("%s: %w", name, err))
+			if progress != nil {
+				progress(result)
+			}
 			return nil
 		}
 		if changed {
@@ -503,6 +512,9 @@ func Backup(ctx context.Context, d *drive, f config.FolderConfiguration, device 
 		}
 		return nil
 	})
+	if result.Failed > int64(len(fileErrors)) {
+		fileErrors = append(fileErrors, fmt.Errorf("%d more errors", result.Failed-int64(len(fileErrors))))
+	}
 	return result, errors.Join(append(fileErrors, err)...)
 }
 
@@ -535,7 +547,10 @@ func (r contextReader) Read(b []byte) (int, error) {
 // uploadFile makes the Drive copy of name match the source. versioned reports
 // whether the previous Drive content was already preserved by an earlier
 // attempt in this run, so a retry after yielding does not copy it twice.
-func uploadFile(ctx context.Context, src *os.Root, tree *remoteTree, name string, initial os.FileInfo, versionDir func(context.Context, string) (string, error), versioned *bool) (bool, error) {
+// While the run is backing off it returns errPace before contacting Drive,
+// unless the caller has already waited; the caller then waits without
+// holding the source open.
+func uploadFile(ctx context.Context, src *os.Root, tree *remoteTree, name string, initial os.FileInfo, versionDir func(context.Context, string) (string, error), versioned *bool, pace *pacer, waited bool) (bool, error) {
 	if err := checkPrimary(ctx); err != nil {
 		return false, err
 	}
@@ -572,6 +587,9 @@ func uploadFile(ctx context.Context, src *os.Root, tree *remoteTree, name string
 		if _, err = in.Seek(0, io.SeekStart); err != nil {
 			return false, err
 		}
+	}
+	if pace.delay > 0 && !waited {
+		return false, errPace
 	}
 	dir := path.Dir(name)
 	if dir == "." {

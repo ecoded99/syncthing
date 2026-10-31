@@ -32,6 +32,11 @@ type fakeDrive struct {
 	// corrupt makes uploads report a wrong checksum.
 	corrupt bool
 	limit   int64
+	// failUploads rejects that many upload requests with failStatus
+	// (default 429); uploads counts all upload requests.
+	failUploads int
+	failStatus  int
+	uploads     int
 }
 
 type fakeFile struct {
@@ -129,6 +134,7 @@ func (f *fakeDrive) serve(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(r.Body).Decode(&meta)
 		meta.ModifiedTime = src.ModifiedTime
 		reply(f.store(f.id(), meta, append([]byte(nil), src.data...)))
+	case (strings.HasPrefix(p, "/upload/drive/v3/files") || strings.HasPrefix(p, "/session/")) && f.reject(w):
 	case strings.HasPrefix(p, "/upload/drive/v3/files"):
 		id := strings.TrimPrefix(strings.TrimPrefix(p, "/upload/drive/v3/files"), "/")
 		switch r.URL.Query().Get("uploadType") {
@@ -174,6 +180,21 @@ func (f *fakeDrive) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "unexpected "+r.Method+" "+p, http.StatusNotImplemented)
 	}
+}
+
+// reject counts an upload request and fails it while failures remain.
+func (f *fakeDrive) reject(w http.ResponseWriter) bool {
+	f.uploads++
+	if f.failUploads == 0 {
+		return false
+	}
+	f.failUploads--
+	status := f.failStatus
+	if status == 0 {
+		status = http.StatusTooManyRequests
+	}
+	http.Error(w, `{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}`, status)
+	return true
 }
 
 // lookup resolves a slash-separated path below the folder with the given ID.
