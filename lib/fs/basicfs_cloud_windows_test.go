@@ -92,7 +92,7 @@ func TestLstatCloudPlaceholder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !fi.IsDir() || fi.Mode()&ModeType != ModeDirectory {
+	if !fi.IsDir() || os.FileMode(fi.Mode())&os.ModeIrregular != 0 {
 		t.Errorf("placeholder dir: mode=%v", fi.Mode())
 	}
 }
