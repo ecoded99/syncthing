@@ -253,6 +253,8 @@ func (f *sendReceiveFolder) pullerIteration(ctx context.Context, scanChan chan<-
 	copyChan := make(chan copyBlocksState, f.Copiers)
 	finisherChan := make(chan *sharedPullerState, f.Copiers)
 	dbUpdateChan := make(chan dbUpdateJob, f.Copiers)
+	bundleChan := make(chan fileBundle, 1)
+	var bundleWg sync.WaitGroup
 
 	var pullWg sync.WaitGroup
 	var copyWg sync.WaitGroup
@@ -280,13 +282,22 @@ func (f *sendReceiveFolder) pullerIteration(ctx context.Context, scanChan chan<-
 	})
 
 	// finisherRoutine finishes when finisherChan is closed
-	for range f.Copiers {
+	finishers := f.Copiers
+	if f.ExperimentalBatchedTransfers && f.Type != config.FolderTypeReceiveEncrypted {
+		// Bound concurrent durable file application without serially flushing
+		// a complete bundle or weakening per-file crash guarantees.
+		finishers = max(finishers, min(8, f.MaxConcurrentWrites))
+	}
+	for range finishers {
 		doneWg.Go(func() {
 			f.finisherRoutine(ctx, finisherChan, dbUpdateChan, scanChan)
 		})
 	}
 
-	fileDeletions, dirDeletions, err := f.processNeeded(ctx, dbUpdateChan, copyChan, scanChan)
+	bundleWg.Go(func() { f.bundleRoutine(ctx, bundleChan, copyChan, finisherChan) })
+	fileDeletions, dirDeletions, err := f.processNeeded(ctx, dbUpdateChan, copyChan, scanChan, bundleChan)
+	close(bundleChan)
+	bundleWg.Wait() // Fallback sends must finish before copyChan is closed.
 
 	// Signal copy and puller routines that we are done with the in data for
 	// this iteration. Wait for them to finish.
@@ -313,7 +324,19 @@ func (f *sendReceiveFolder) pullerIteration(ctx context.Context, scanChan chan<-
 	return changed, err
 }
 
-func (f *sendReceiveFolder) processNeeded(ctx context.Context, dbUpdateChan chan<- dbUpdateJob, copyChan chan<- copyBlocksState, scanChan chan<- string) (map[string]protocol.FileInfo, []protocol.FileInfo, error) {
+func (f *sendReceiveFolder) processNeeded(ctx context.Context, dbUpdateChan chan<- dbUpdateJob, copyChan chan<- copyBlocksState, scanChan chan<- string, bundleChan chan<- fileBundle) (map[string]protocol.FileInfo, []protocol.FileInfo, error) {
+	var bundle fileBundle
+	flushBundle := func() {
+		if len(bundle.files) == 0 {
+			return
+		}
+		select {
+		case bundleChan <- bundle:
+		case <-ctx.Done():
+		}
+		bundle = fileBundle{}
+	}
+	defer flushBundle()
 	var dirDeletions []protocol.FileInfo
 	fileDeletions := map[string]protocol.FileInfo{}
 	buckets := map[string][]protocol.FileInfo{}
@@ -506,6 +529,17 @@ nextFile:
 			continue
 		}
 
+		if conn := f.bundleConnection(fi, bundle.conn); conn != nil {
+			if bundle.conn != nil && bundle.conn.ConnectionID() != conn.ConnectionID() {
+				flushBundle()
+			}
+			bundle.conn = conn
+			bundle.files = append(bundle.files, fi)
+			if len(bundle.files) == protocol.BundleMaxFiles {
+				flushBundle()
+			}
+			continue
+		}
 		if err := f.handleFile(ctx, fi, copyChan); err != nil {
 			f.newPullError(fileName, err)
 		}
