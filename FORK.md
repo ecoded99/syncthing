@@ -180,7 +180,13 @@ directly; on first start after updating, an install still on the stock
 
 ## Signed automatic updates
 
-The feed is `https://api.github.com/repos/ecoded99/syncthing/releases`. Enable
+The feed is `https://raw.githubusercontent.com/ecoded99/syncthing/update-feed/releases.json`.
+It is refreshed after each signed release and served without GitHub REST API
+quotas. Archive URLs point directly to public release downloads; the native
+updater still verifies their signatures against its embedded public key.
+Existing installations using the GitHub API feed can set Releases URL under
+Actions > Advanced > Options to this address without restarting.
+Enable
 Automatic Upgrades in Syncthing settings and allow prereleases on canary PCs.
 Versions named `vX.Y.Z-ecoded.N` are built and signed by the fork workflow.
 Stable-channel PCs wait until a release is promoted out of prerelease. The release
