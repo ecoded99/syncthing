@@ -30,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -72,7 +73,8 @@ const (
 )
 
 type service struct {
-	cloudBackup *cloudbackup.Service
+	cloudBackup      *cloudbackup.Service
+	linkSpeedRunning atomic.Bool
 	suture.Service
 
 	id                   protocol.DeviceID
@@ -307,6 +309,7 @@ func (s *service) Serve(ctx context.Context) error {
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/error", s.postSystemError)                // <body>
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/error/clear", s.postSystemErrorClear)     // -
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/ping", s.restPing)                        // -
+	restMux.HandlerFunc(http.MethodPost, "/rest/system/linkspeed", s.postLinkSpeedTest)          // device
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/reset", s.postSystemReset)                // [folder]
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/restart", s.postSystemRestart)            // -
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/shutdown", s.postSystemShutdown)          // -
