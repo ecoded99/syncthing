@@ -166,14 +166,27 @@ directly; on first start after updating, an install still on the stock
 The feed is `https://api.github.com/repos/ecoded99/syncthing/releases`. Enable
 Automatic Upgrades in Syncthing settings and allow prereleases on canary PCs.
 Versions named `vX.Y.Z-ecoded.N` are built and signed by the fork workflow.
-Stable-channel PCs wait until a release is promoted out of prerelease. Windows
-amd64 is the initial supported release platform.
+Stable-channel PCs wait until a release is promoted out of prerelease. The release
+workflow builds Windows amd64, macOS Apple Silicon (arm64), and macOS Intel
+(amd64), and runs the fork's tests natively on each platform before publishing.
 
-Archives contain `syncthing.exe` and `release.sig`. The signature covers the
-archive filename, a newline, and the executable bytes using the native updater's
+Windows archives contain `syncthing.exe`; macOS archives contain `syncthing`
+with executable permissions. Both include `release.sig`, `LICENSE`, and
+`FORK.md`. macOS ZIPs are named `syncthing-macos-arm64-vX.Y.Z-ecoded.N.zip`
+or `syncthing-macos-amd64-vX.Y.Z-ecoded.N.zip` so the native updater can select
+the correct build. `SHA256SUMS.txt` covers all three release archives.
+The signature covers the archive filename, a newline, and the executable bytes
+using the native updater's
 verification format. The fork public key is embedded in the binary; its PEM
 SHA-256 is `afdf6df1b1d5584f46499243b94c067571fecb44b1e814b1ab5a49ca723e831c`.
 The private key is never included in source or release artifacts.
+
+On macOS, extract the matching archive and run `./syncthing` from Terminal;
+the browser GUI provides sync, Drive backup, and manual update checks. The tray
+icon, Explorer status integration, and power-throttling opt-out are Windows-only.
+These macOS releases are command-line executables, not app bundles, and are not
+signed with an Apple Developer ID or notarized. The fork's updater signature is
+separate from Apple's code signing.
 
 The native updater saves the previous executable with an `.old` suffix. This is
 not an automatic health-check rollback. Preserve config and database backups
