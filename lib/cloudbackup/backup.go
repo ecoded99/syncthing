@@ -200,6 +200,7 @@ func ValidateSource(f config.FolderConfiguration) (string, error) {
 	if f.FilesystemType != config.FilesystemTypeBasic || f.Type == config.FolderTypeReceiveEncrypted {
 		return "", errors.New("backup requires a basic, unencrypted local folder")
 	}
+	src = canonicalSourcePath(src)
 	if err := noLinks(src); err != nil {
 		return "", err
 	}

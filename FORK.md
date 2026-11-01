@@ -102,6 +102,10 @@ contains everything included from the source, potentially including sensitive
 files: choose its sharing accordingly. Drive's per-user write rate means
 folders with many small files take a long first run.
 
+On macOS, the standard system aliases `/var`, `/tmp`, and `/etc` are resolved
+to their expected `/private` paths before source validation. Other symlinks,
+including links within the source folder, remain excluded.
+
 Authenticated endpoints:
 
 - `GET /rest/folder/cloudbackup?folder=ID`: current status and Drive folder link.
