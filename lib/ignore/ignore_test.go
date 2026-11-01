@@ -49,6 +49,29 @@ func newTestFS() fs.Filesystem {
 	return testFS
 }
 
+func TestGlobalPatterns(t *testing.T) {
+	testFS := fs.NewFilesystem(fs.FilesystemTypeBasic, t.TempDir())
+	matcher := New(testFS, WithGlobalPatterns([]string{"*.tmp"}))
+	if err := matcher.Load(".stignore"); !fs.IsNotExist(err) {
+		t.Fatalf("expected missing local ignore file, got %v", err)
+	}
+	if !matcher.Match("test.tmp").IsIgnored() {
+		t.Fatal("global pattern did not match without a local ignore file")
+	}
+	if err := fs.WriteFile(testFS, ".stignore", []byte("!keep.tmp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := matcher.Load(".stignore"); err != nil {
+		t.Fatal(err)
+	}
+	if matcher.Match("keep.tmp").IsIgnored() || !matcher.Match("other.tmp").IsIgnored() {
+		t.Fatal("local exception or global pattern was not applied")
+	}
+	if got := matcher.Lines(); len(got) != 1 || got[0] != "!keep.tmp" {
+		t.Fatalf("local ignore lines were changed: %v", got)
+	}
+}
+
 func TestIgnore(t *testing.T) {
 	testFs := newTestFS()
 

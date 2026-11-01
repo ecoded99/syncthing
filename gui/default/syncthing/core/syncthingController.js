@@ -1796,6 +1796,7 @@ angular.module('syncthing.core')
         $scope.showSettings = function () {
             // Make a working copy
             $scope.tmpOptions = angular.copy($scope.config.options);
+            $scope.tmpOptions._globalIgnorePatternsText = ($scope.tmpOptions.globalIgnorePatterns || []).join('\n');
             $scope.tmpOptions.deviceName = $scope.thisDevice().name;
             $scope.tmpOptions.upgrades = "none";
             if ($scope.tmpOptions.autoUpgradeIntervalH > 0) {
@@ -1857,6 +1858,7 @@ angular.module('syncthing.core')
             // Options has artificial properties injected into the temp config.
             // Need to recompute them before we can check equality
             var options = angular.copy($scope.config.options);
+            options._globalIgnorePatternsText = (options.globalIgnorePatterns || []).join('\n');
             options.deviceName = $scope.thisDevice().name;
             options.upgrades = "none";
             if (options.autoUpgradeIntervalH > 0) {
@@ -1908,6 +1910,8 @@ angular.module('syncthing.core')
                 });
 
                 // Apply new settings locally
+                $scope.tmpOptions.globalIgnorePatterns = $scope.tmpOptions._globalIgnorePatternsText ? $scope.tmpOptions._globalIgnorePatternsText.split('\n') : [];
+                delete $scope.tmpOptions._globalIgnorePatternsText;
                 $scope.thisDeviceIn($scope.tmpDevices).name = $scope.tmpOptions.deviceName;
                 $scope.config.options = angular.copy($scope.tmpOptions);
                 $scope.config.gui = angular.copy($scope.tmpGUI);
