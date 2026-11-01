@@ -122,6 +122,7 @@ type ChangeDetector interface {
 
 type Matcher struct {
 	fs             fs.Filesystem
+	globalLines    []string
 	lines          []string  // exact lines read from .stignore
 	patterns       []Pattern // patterns including those from included files
 	curHash        string
@@ -131,6 +132,11 @@ type Matcher struct {
 
 // An Option can be passed to New()
 type Option func(*Matcher)
+
+// WithGlobalPatterns adds device-wide patterns after the folder's patterns.
+func WithGlobalPatterns(lines []string) Option {
+	return func(m *Matcher) { m.globalLines = append([]string(nil), lines...) }
+}
 
 // WithChangeDetector sets a custom ChangeDetector. The default is to simply
 // use the on disk modtime for comparison.
@@ -167,7 +173,9 @@ func (m *Matcher) Load(file string) error {
 
 	fd, info, err := loadIgnoreFile(m.fs, file)
 	if err != nil {
-		m.parseLocked(&bytes.Buffer{}, file)
+		if parseErr := m.parseLocked(&bytes.Buffer{}, file); parseErr != nil {
+			return parseErr
+		}
 		return err
 	}
 	defer fd.Close()
@@ -192,6 +200,11 @@ func (m *Matcher) Parse(r io.Reader, file string) error {
 
 func (m *Matcher) parseLocked(r io.Reader, file string) error {
 	lines, patterns, err := parseIgnoreFile(m.fs, r, file, m.changeDetector, make(map[string]struct{}))
+	_, globalPatterns, globalErr := parseIgnoreFile(m.fs, strings.NewReader(strings.Join(m.globalLines, "\n")), file, m.changeDetector, make(map[string]struct{}))
+	patterns = append(patterns, globalPatterns...)
+	if err == nil && globalErr != nil {
+		err = globalErr
+	}
 	// Error is saved and returned at the end. We process the patterns
 	// (possibly blank) anyway.
 

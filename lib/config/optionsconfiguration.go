@@ -20,6 +20,7 @@ import (
 )
 
 type OptionsConfiguration struct {
+	GlobalIgnorePatterns        []string `json:"globalIgnorePatterns" xml:"globalIgnorePattern" restart:"true"`
 	RawListenAddresses          []string `json:"listenAddresses" xml:"listenAddress" default:"default"`
 	RawGlobalAnnServers         []string `json:"globalAnnounceServers" xml:"globalAnnounceServer" default:"default"`
 	GlobalAnnEnabled            bool     `json:"globalAnnounceEnabled" xml:"globalAnnounceEnabled" default:"true"`
@@ -92,6 +93,7 @@ type OptionsConfiguration struct {
 
 func (opts OptionsConfiguration) Copy() OptionsConfiguration {
 	optsCopy := opts
+	optsCopy.GlobalIgnorePatterns = append([]string(nil), opts.GlobalIgnorePatterns...)
 	optsCopy.RawListenAddresses = make([]string, len(opts.RawListenAddresses))
 	copy(optsCopy.RawListenAddresses, opts.RawListenAddresses)
 	optsCopy.RawGlobalAnnServers = make([]string, len(opts.RawGlobalAnnServers))
