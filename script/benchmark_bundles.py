@@ -96,6 +96,7 @@ def verify(dst,manifest):
 import argparse
 parser=argparse.ArgumentParser(description='Compare durable ordinary sync and explicit whole-file bundles over loopback.')
 parser.add_argument('--binary',required=True,type=Path)
+parser.add_argument('--baseline-binary',type=Path,help='Compare an older bundle build with --binary, enabling bundles in both.')
 parser.add_argument('--work',required=True,type=Path)
 parser.add_argument('--files',type=int,default=8192)
 parser.add_argument('--trials',type=int,default=3)
@@ -111,20 +112,23 @@ for i in range(N):
     manifest[p.relative_to(fixture).as_posix()]=(hashlib.sha256(data).hexdigest(),p.stat().st_mtime_ns)
 base_setup=setup
 mode=False
-def setup(*args):
-    identity,key=base_setup(*args)
-    tree=ET.parse(args[0]/'config.xml'); c=tree.getroot()
-    c.find('folder/experimentalBatchedTransfers').text=str(mode).lower()
-    tree.write(args[0]/'config.xml',encoding='utf-8',xml_declaration=True)
+def setup(*setup_args):
+    identity,key=base_setup(*setup_args)
+    tree=ET.parse(setup_args[0]/'config.xml'); c=tree.getroot()
+    c.find('folder/experimentalBatchedTransfers').text=str(mode or args.baseline_binary is not None).lower()
+    tree.write(setup_args[0]/'config.xml',encoding='utf-8',xml_declaration=True)
     return identity,key
 
 rows=[]
+labels=['before','after'] if args.baseline_binary else ['ordinary','bundle']
 for trial in range(1,args.trials+1):
     order=[False,True] if trial%2 else [True,False]
     for mode in order:
-        run=ROOT/f"{trial}-{'bundle' if mode else 'ordinary'}"
+        EXE=(args.binary if mode or args.baseline_binary is None else args.baseline_binary).resolve()
+        label=labels[int(mode)]
+        run=ROOT/f"{trial}-{label}"
         run.mkdir(); dst=run/'received'; dst.mkdir()
         elapsed=transfer(fixture,dst,run,N,N*SIZE); verify(dst,manifest)
-        row=dict(trial=trial,mode='bundle' if mode else 'ordinary',seconds=elapsed,verified=N,bundle_requests=last_bundle_requests)
+        row=dict(trial=trial,mode=label,seconds=elapsed,verified=N,bundle_requests=last_bundle_requests)
         rows.append(row); (ROOT/'results.json').write_text(json.dumps(rows,indent=2)); emit(row)
-emit({mode:statistics.median(r['seconds'] for r in rows if r['mode']==mode) for mode in ['ordinary','bundle']})
+emit({mode:statistics.median(r['seconds'] for r in rows if r['mode']==mode) for mode in labels})

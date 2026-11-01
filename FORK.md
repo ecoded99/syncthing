@@ -37,8 +37,8 @@ Verified content is written into exclusively created Syncthing temporary files.
 The normal finisher performs fsync, local-change/conflict checks, replacement,
 metadata application and batched database updates. While enabled, finishing
 concurrency can increase to eight, bounded by `maxConcurrentWrites`; an existing
-higher `copiers` setting is retained. Per-file durability is not disabled. One active
-bundle and one queued bundle bound the extra pipeline independently of tree size.
+higher `copiers` setting is retained. Per-file durability is not disabled. Bundle
+payloads and staging/application queues are bounded independently of tree size.
 No general-purpose archive extractor runs against live folders.
 
 This path targets initial copies: existing local files, existing temporary files,
@@ -48,6 +48,36 @@ reads retry through the ordinary copier/puller, which can select another source.
 Interrupted staged files retain the ordinary temporary-file recovery behavior;
 an interrupted in-memory bundle is requested again. There is no persistent
 archive checkpoint or whole-bundle atomic commit. The option remains off by default.
+
+The optimized receiver separates downloading, staging and durable finalization.
+It prefetches one verified bundle while up to eight bounded staging workers
+create temporary files, and uses bundle-sized queues between finishing and index
+updates. At most three bundle payloads are active (6 MiB of file content, excluding
+protocol overhead), independently of folder size. The already-computed source
+availability is reused instead of querying the database twice per candidate.
+Hash verification, fsync and conflict checks remain enabled.
+
+A receiver profile of the first implementation showed filesystem calls dominating
+the samples, with some finishers waiting while the sole staging worker created a
+temporary file. Alternating before/after trials against commit `ef4a56808` with
+bundles enabled in both builds measured the following for 4,096 random 16 KiB files:
+
+| Trial | Previous bundle pipeline | Optimized pipeline |
+| --- | ---: | ---: |
+| 1 | 16.85 s | 13.52 s |
+| 2 | 15.99 s | 13.60 s |
+| 3 | 15.98 s | 13.13 s |
+| Median | 15.99 s | 13.52 s |
+
+The median elapsed time decreased by 15.4%. All 24,576 received file instances
+passed SHA-256 and timestamp verification; all runs reported bundle usage.
+This is a same-drive Windows loopback measurement with background applications
+running, not a prediction for WAN transfers. Timings include startup, scanning
+and index exchange; verification is outside the timed interval.
+
+To compare two bundle builds with the reusable harness, pass
+`--baseline-binary /path/to/previous/syncthing` alongside `--binary`. This enables
+bundles for both builds and alternates their run order.
 
 Three Windows same-drive loopback trials of 2,048 random 16 KiB files measured
 11.43, 10.21 and 10.10 seconds with ordinary sync, versus 10.62, 14.40 and 9.69

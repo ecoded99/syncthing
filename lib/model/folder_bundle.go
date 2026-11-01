@@ -6,6 +6,7 @@ package model
 import (
 	"context"
 	"crypto/sha256"
+	"sync"
 
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/events"
@@ -28,7 +29,7 @@ func bundleFileEligible(file protocol.FileInfo) bool {
 		int64(file.Blocks[0].Size) == file.Size && len(file.Blocks[0].Hash) == sha256.Size && !file.Blocks[0].IsEmpty()
 }
 
-func (f *sendReceiveFolder) bundleConnection(file protocol.FileInfo, preferred protocol.Connection) protocol.Connection {
+func (f *sendReceiveFolder) bundleConnection(file protocol.FileInfo, preferred protocol.Connection, available []Availability) protocol.Connection {
 	if !f.ExperimentalBatchedTransfers || f.Type == config.FolderTypeReceiveEncrypted || !bundleFileEligible(file) {
 		return nil
 	}
@@ -42,21 +43,55 @@ func (f *sendReceiveFolder) bundleConnection(file protocol.FileInfo, preferred p
 			return nil
 		}
 	}
-	for _, available := range f.model.fileAvailability(f.FolderConfiguration, file) {
-		if preferred != nil && available.ID == preferred.DeviceID() && preferred.Statistics().PeerSupportsBatch {
+	for _, source := range available {
+		if preferred != nil && source.ID == preferred.DeviceID() && preferred.Statistics().PeerSupportsBatch {
 			return preferred
 		}
-		if conn, ok := f.model.requestConnectionForDevice(available.ID); ok && conn.Statistics().PeerSupportsBatch {
+		if conn, ok := f.model.requestConnectionForDevice(source.ID); ok && conn.Statistics().PeerSupportsBatch {
 			return conn
 		}
 	}
 	return nil
 }
 
-// One downloading/staging worker and one queued bundle bound memory independently
-// of folder size. Ordinary finishers flush and apply verified staged files while
-// the next bundle downloads. Nothing is extracted over live paths.
+type downloadedBundle struct {
+	fileBundle
+	results []protocol.BundleResult
+	err     error
+}
+
+// Download, staging and durable finalization run independently. Only one bundle
+// is downloaded, one queued and one staged at a time (at most 6 MiB of content).
+// Staging workers share the folder write limiter and never touch live paths.
 func (f *sendReceiveFolder) bundleRoutine(ctx context.Context, in <-chan fileBundle, copyChan chan<- copyBlocksState, out chan<- *sharedPullerState) {
+	downloaded := make(chan downloadedBundle, 1)
+	go func() {
+		defer close(downloaded)
+		f.downloadBundles(ctx, in, downloaded)
+	}()
+	f.stageDownloadedBundles(ctx, downloaded, copyChan, out)
+}
+
+func (f *sendReceiveFolder) stageDownloadedBundles(ctx context.Context, downloaded <-chan downloadedBundle, copyChan chan<- copyBlocksState, out chan<- *sharedPullerState) {
+	workers := make(chan struct{}, max(1, min(8, f.MaxConcurrentWrites)))
+	for bundle := range downloaded {
+		var wg sync.WaitGroup
+		for i, file := range bundle.files {
+			workers <- struct{}{}
+			wg.Go(func() {
+				defer func() { <-workers }()
+				var result protocol.BundleResult
+				if bundle.err == nil {
+					result = bundle.results[i]
+				}
+				f.stageBundleMember(ctx, file, result, bundle.err, copyChan, out)
+			})
+		}
+		wg.Wait()
+	}
+}
+
+func (f *sendReceiveFolder) downloadBundles(ctx context.Context, in <-chan fileBundle, out chan<- downloadedBundle) {
 	for bundle := range in {
 		f.setState(FolderSyncing)
 		requests := make([]protocol.Request, len(bundle.files))
@@ -64,30 +99,32 @@ func (f *sendReceiveFolder) bundleRoutine(ctx context.Context, in <-chan fileBun
 			requests[i] = protocol.Request{Folder: f.folderID, Name: file.Name, Size: int(file.Size), Hash: file.Blocks[0].Hash}
 		}
 		results, err := protocol.RequestBundle(ctx, bundle.conn, requests)
-		for i, file := range bundle.files {
-			if ctx.Err() != nil {
-				f.queue.Done(file.Name)
-				continue
-			}
-			if err != nil || results[i].Error != nil {
-				// Includes stock/disconnected peers, corrupt frames and individual
-				// source errors. Normal requests can select another source.
-				if err := f.handleFile(ctx, file, copyChan); err != nil {
-					f.newPullError(file.Name, err)
-				}
-				continue
-			}
-			f.evLogger.Log(events.ItemStarted, map[string]string{"folder": f.folderID, "item": file.Name, "type": "file", "action": "update"})
-			s, err := f.stageBundleFile(ctx, file, results[i].Data)
-			if err != nil {
-				f.newPullError(file.Name, err)
-				f.queue.Done(file.Name)
-				continue
-			}
-			f.model.progressEmitter.Register(s)
-			out <- s
-		}
+		out <- downloadedBundle{bundle, results, err}
 	}
+}
+
+func (f *sendReceiveFolder) stageBundleMember(ctx context.Context, file protocol.FileInfo, result protocol.BundleResult, bundleErr error, copyChan chan<- copyBlocksState, out chan<- *sharedPullerState) {
+	if ctx.Err() != nil {
+		f.queue.Done(file.Name)
+		return
+	}
+	if bundleErr != nil || result.Error != nil {
+		// Includes stock/disconnected peers, corrupt frames and individual
+		// source errors. Normal requests can select another source.
+		if err := f.handleFile(ctx, file, copyChan); err != nil {
+			f.newPullError(file.Name, err)
+		}
+		return
+	}
+	f.evLogger.Log(events.ItemStarted, map[string]string{"folder": f.folderID, "item": file.Name, "type": "file", "action": "update"})
+	s, err := f.stageBundleFile(ctx, file, result.Data)
+	if err != nil {
+		f.newPullError(file.Name, err)
+		f.queue.Done(file.Name)
+		return
+	}
+	f.model.progressEmitter.Register(s)
+	out <- s
 }
 
 func (f *sendReceiveFolder) stageBundleFile(ctx context.Context, file protocol.FileInfo, data []byte) (*sharedPullerState, error) {

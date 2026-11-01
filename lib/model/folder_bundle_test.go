@@ -7,12 +7,75 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 
 	"github.com/syncthing/syncthing/lib/fs"
 	"github.com/syncthing/syncthing/lib/protocol"
 )
+
+func TestParallelBundleStaging(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		t.Run(fmt.Sprint(canceled), func(t *testing.T) {
+			_, f := setupSendReceiveFolder(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if canceled {
+				cancel()
+			}
+			in := make(chan downloadedBundle, 1)
+			bundle := downloadedBundle{}
+			for i := range protocol.BundleMaxFiles {
+				bundle.files = append(bundle.files, protocol.FileInfo{Name: fmt.Sprintf("file-%d", i), Size: 4, Permissions: 0o644, ModifiedS: 1700000000})
+				bundle.results = append(bundle.results, protocol.BundleResult{Data: []byte("data")})
+			}
+			in <- bundle
+			close(in)
+			copies := make(chan copyBlocksState, protocol.BundleMaxFiles)
+			finished := make(chan *sharedPullerState, protocol.BundleMaxFiles)
+			f.stageDownloadedBundles(ctx, in, copies, finished)
+			if len(copies) != 0 {
+				t.Fatal("verified members went through ordinary copier")
+			}
+			if canceled {
+				if len(finished) != 0 {
+					t.Fatal("cancellation staged files")
+				}
+				return
+			}
+			if len(finished) != protocol.BundleMaxFiles {
+				t.Fatal("lost staged members", len(finished))
+			}
+			db := make(chan dbUpdateJob, protocol.BundleMaxFiles)
+			scans := make(chan string, protocol.BundleMaxFiles)
+			for range protocol.BundleMaxFiles {
+				s := <-finished
+				f.model.progressEmitter.Deregister(s)
+				if _, err := f.mtimefs.Lstat(s.file.Name); !fs.IsNotExist(err) {
+					t.Fatal("staging touched live file", err)
+				}
+				closed, err := s.finalClose()
+				must(t, err)
+				if !closed || !s.fsync {
+					t.Fatal("durability bypassed")
+				}
+				must(t, f.performFinish(s.file, s.curFile, s.hasCurFile, s.tempName, db, scans))
+				fd, err := f.mtimefs.Open(s.file.Name)
+				must(t, err)
+				data, err := io.ReadAll(fd)
+				fd.Close()
+				must(t, err)
+				if string(data) != "data" {
+					t.Fatal("corrupt parallel staging", string(data))
+				}
+			}
+			if len(db) != protocol.BundleMaxFiles || len(scans) != 0 {
+				t.Fatal("incorrect apply/index updates")
+			}
+		})
+	}
+}
 
 func TestBundleEligibility(t *testing.T) {
 	h := sha256.Sum256([]byte("data"))

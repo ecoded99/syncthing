@@ -251,8 +251,12 @@ func (f *sendReceiveFolder) pullerIteration(ctx context.Context, scanChan chan<-
 
 	pullChan := make(chan pullBlockState, f.Copiers)
 	copyChan := make(chan copyBlocksState, f.Copiers)
-	finisherChan := make(chan *sharedPullerState, f.Copiers)
-	dbUpdateChan := make(chan dbUpdateJob, f.Copiers)
+	finishBuffer := f.Copiers
+	if f.ExperimentalBatchedTransfers && f.Type != config.FolderTypeReceiveEncrypted {
+		finishBuffer = max(finishBuffer, protocol.BundleMaxFiles)
+	}
+	finisherChan := make(chan *sharedPullerState, finishBuffer)
+	dbUpdateChan := make(chan dbUpdateJob, finishBuffer)
 	bundleChan := make(chan fileBundle, 1)
 	var bundleWg sync.WaitGroup
 
@@ -529,7 +533,7 @@ nextFile:
 			continue
 		}
 
-		if conn := f.bundleConnection(fi, bundle.conn); conn != nil {
+		if conn := f.bundleConnection(fi, bundle.conn, devices); conn != nil {
 			if bundle.conn != nil && bundle.conn.ConnectionID() != conn.ConnectionID() {
 				flushBundle()
 			}
