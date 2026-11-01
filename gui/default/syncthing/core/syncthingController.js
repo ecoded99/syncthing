@@ -1475,6 +1475,26 @@ angular.module('syncthing.core')
             return 'default';
         };
 
+        $scope.linkSpeedTests = {};
+        $scope.linkSpeedRunning = false;
+        $scope.testLinkSpeed = function (deviceID) {
+            if ($scope.linkSpeedRunning) {
+                return;
+            }
+            var test = { running: true };
+            $scope.linkSpeedTests[deviceID] = test;
+            $scope.linkSpeedRunning = true;
+            $http.post(urlbase + '/system/linkspeed?device=' + encodeURIComponent(deviceID), {}).then(function (response) {
+                test.result = response.data;
+                test.completedAt = new Date();
+            }, function (response) {
+                test.error = typeof response.data === 'string' ? response.data : $translate.instant('Link speed test failed.');
+            }).finally(function () {
+                test.running = false;
+                $scope.linkSpeedRunning = false;
+            });
+        };
+
         $scope.deviceAddr = function (deviceCfg) {
             var conn = $scope.connections[deviceCfg.deviceID];
             if (conn && conn.connected) {

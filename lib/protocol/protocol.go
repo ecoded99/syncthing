@@ -167,6 +167,7 @@ type ConnectionInfo interface {
 type rawConnection struct {
 	batchServeMut sync.Mutex
 	peerBatch     atomic.Bool
+	peerSpeed     atomic.Bool
 	batchMut      sync.Mutex
 	batchPending  []*batchCall
 	batchTimer    *time.Timer
@@ -357,6 +358,12 @@ func (c *rawConnection) IndexUpdate(ctx context.Context, idxUp *IndexUpdate) err
 
 // Request returns the bytes for the specified block after fetching them from the connected peer.
 func (c *rawConnection) Request(ctx context.Context, req *Request) ([]byte, error) {
+	if req.Folder == "" && (req.Name == speedDownloadName || req.Name == speedUploadName) {
+		if err := c.prepareSpeedRequest(req); err != nil {
+			return nil, err
+		}
+		return c.requestDirect(ctx, req)
+	}
 	if req.BatchEligible && c.peerBatch.Load() && batchable(req) {
 		return c.requestBatched(ctx, req)
 	}
@@ -383,15 +390,29 @@ func (c *rawConnection) requestDirect(ctx context.Context, req *Request) ([]byte
 	}
 	c.awaiting[id] = rc
 	c.awaitingMut.Unlock()
+	completed := false
+	defer func() {
+		if !completed {
+			// Responses and connection closure remove their own entries.
+			// Cancellation must also release requests that never get a reply.
+			c.awaitingMut.Lock()
+			delete(c.awaiting, id)
+			c.awaitingMut.Unlock()
+		}
+	}()
 
 	req.ID = id
 	ok := c.send(ctx, req.toWire(), nil)
 	if !ok {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		return nil, ErrClosed
 	}
 
 	select {
 	case res, ok := <-rc:
+		completed = true
 		if !ok {
 			return nil, ErrClosed
 		}
@@ -482,6 +503,7 @@ func (c *rawConnection) dispatcherLoop() (err error) {
 		switch msg := msg.(type) {
 		case *bep.ClusterConfig:
 			c.peerBatch.Store(bytesEqualVersion(getExtension(msg, batchCapabilityField)))
+			c.peerSpeed.Store(bytesEqualVersion(getExtension(msg, speedCapabilityField)))
 			err = c.model.ClusterConfig(clusterConfigFromWire(msg))
 
 		case *bep.Index:
@@ -714,7 +736,9 @@ func checkFilename(name string) error {
 func (c *rawConnection) handleRequest(req *Request) {
 	var res RequestResponse
 	var err error
-	if len(req.batchPayload) > 0 {
+	if len(req.speedPayload) > 0 {
+		res, err = c.serveSpeedRequest(req)
+	} else if len(req.batchPayload) > 0 {
 		res, err = c.serveBatch(req)
 	} else {
 		res, err = c.model.Request(req)

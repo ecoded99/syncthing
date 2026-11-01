@@ -11,6 +11,19 @@ which still checks its hash and applies the usual conflict, metadata, and
 per-file durability rules. Encrypted folders and stock peers use ordinary reads.
 There is no direct unpacking over live folders. Batching is disabled by default.
 
+## Link speed tests
+
+Expand a connected device under Remote Devices and click **Test Link Speed**
+beside Pause and Edit. Both devices must run `v2.1.7-ecoded.8` or later.
+The results show download from and upload to that peer, in Mbps, from the
+perspective of the device whose GUI is open.
+
+The test sends random data over the existing authenticated sync connections;
+it does not create or change synced files. It sends at most 64 MiB per direction
+and times out after 20 seconds. One test can run at a time from each GUI server.
+Active sync traffic, relay connections, and configured bandwidth limits affect
+the measured application throughput. Older peers report that tests are unsupported.
+
 ## Validation
 
 On a Windows loopback fixture of 8,192 random 16 KiB files (128 MiB), three

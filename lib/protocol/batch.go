@@ -69,7 +69,7 @@ func getExtension(m proto.Message, field protowire.Number) []byte {
 
 func bytesEqualVersion(b []byte) bool { return bytes.Equal(b, []byte{1}) }
 func batchable(r *Request) bool {
-	return r.Offset == 0 && r.BlockNo == 0 && r.Size > 0 && r.Size <= batchMaxFile && len(r.Hash) == sha256.Size && len(r.batchPayload) == 0
+	return r.Offset == 0 && r.BlockNo == 0 && r.Size > 0 && r.Size <= batchMaxFile && len(r.Hash) == sha256.Size && len(r.batchPayload) == 0 && len(r.speedPayload) == 0
 }
 
 type batchCall struct {

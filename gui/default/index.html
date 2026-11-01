@@ -968,6 +968,18 @@
                               </span>
                             </td>
                           </tr>
+                          <tr ng-if="linkSpeedTests[deviceCfg.deviceID]">
+                            <th><span class="fas fa-fw fa-tachometer-alt"></span>&nbsp;<span translate>Link Speed Test</span></th>
+                            <td class="text-right" aria-live="polite">
+                              <span ng-if="linkSpeedTests[deviceCfg.deviceID].running" translate>Testing download and upload…</span>
+                              <span class="text-danger" ng-if="linkSpeedTests[deviceCfg.deviceID].error">{{linkSpeedTests[deviceCfg.deviceID].error}}</span>
+                              <div ng-if="linkSpeedTests[deviceCfg.deviceID].result">
+                                <div><span translate>Download</span>: {{linkSpeedTests[deviceCfg.deviceID].result.download.bytesPerSecond * 8 / 1000000 | number:2}} Mbps</div>
+                                <div><span translate>Upload</span>: {{linkSpeedTests[deviceCfg.deviceID].result.upload.bytesPerSecond * 8 / 1000000 | number:2}} Mbps</div>
+                                <small class="text-muted">{{linkSpeedTests[deviceCfg.deviceID].completedAt | date:'mediumTime'}}</small>
+                              </div>
+                            </td>
+                          </tr>
                           <tr ng-if="deviceCfg.remoteGUIPort > 0">
                             <th><span class="fas fa-fw fa-desktop"></span>&nbsp;<span translate>Remote GUI</span></th>
                             <td class="text-right" ng-attr-title="Port {{deviceCfg.remoteGUIPort}}">
@@ -981,6 +993,9 @@
                     </div>
                     <div class="panel-footer">
                       <span class="pull-right">
+                        <button ng-if="connections[deviceCfg.deviceID].connected" type="button" class="btn btn-sm btn-default" ng-click="testLinkSpeed(deviceCfg.deviceID)" ng-disabled="linkSpeedRunning" title="{{'Measures this device connection using up to 64 MiB in each direction. Both devices must support link speed tests. Sync traffic and bandwidth limits affect the result.' | translate}}">
+                          <span class="fas fa-tachometer-alt" ng-class="{'fa-spin': linkSpeedTests[deviceCfg.deviceID].running}"></span>&nbsp;<span translate>Test Link Speed</span>
+                        </button>
                         <button ng-if="!deviceCfg.paused" type="button" class="btn btn-sm btn-default" ng-click="setDevicePause(deviceCfg.deviceID, true)">
                           <span class="fas fa-pause"></span>&nbsp;<span translate>Pause</span>
                         </button>
