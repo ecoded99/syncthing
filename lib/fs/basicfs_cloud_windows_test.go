@@ -62,6 +62,15 @@ func TestLstatCloudPlaceholder(t *testing.T) {
 		t.Skipf("CfRegisterSyncRoot: 0x%08x", uint32(r))
 	}
 	defer cldapi.NewProc("CfUnregisterSyncRoot").Call(uintptr(unsafe.Pointer(dirp)))
+	callbacks := [1]struct {
+		Type     uint32
+		Callback uintptr
+	}{{Type: 0xffffffff}}
+	var key int64
+	if r, _, _ := cldapi.NewProc("CfConnectSyncRoot").Call(uintptr(unsafe.Pointer(dirp)), uintptr(unsafe.Pointer(&callbacks[0])), 0, 0, uintptr(unsafe.Pointer(&key))); int32(r) < 0 {
+		t.Fatalf("CfConnectSyncRoot: 0x%08x", uint32(r))
+	}
+	defer cldapi.NewProc("CfDisconnectSyncRoot").Call(uintptr(key))
 
 	for _, n := range []string{"file", "dir"} {
 		p, _ := windows.UTF16PtrFromString(filepath.Join(dir, n))
@@ -78,8 +87,26 @@ func TestLstatCloudPlaceholder(t *testing.T) {
 	}
 
 	fs := newBasicFilesystem(dir)
-	if fi, err := os.Lstat(filepath.Join(dir, "file")); err != nil || fi.Mode()&os.ModeIrregular == 0 {
-		t.Skip("Go does not report this placeholder as irregular; nothing to test")
+	path := filepath.Join(dir, "file")
+	tag, err := readReparseTag(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tag&ioReparseTagCloudMask != ioReparseTagCloud {
+		t.Fatalf("not a Cloud Files placeholder: tag 0x%08x", tag)
+	}
+	// Some Go versions already recognize cloud placeholders. Still verify
+	// the real filesystem result, and exercise our fallback explicitly below.
+	raw, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	irregular := irregularCloudInfo{raw}
+	if !isLocalCloudFile(path, irregular) {
+		t.Fatal("fully local cloud placeholder was not recognized")
+	}
+	if mode := (&cloudFileInfo{irregular}).Mode(); !mode.IsRegular() {
+		t.Errorf("normalized placeholder mode: %v", mode)
 	}
 	fi, err := fs.Lstat("file")
 	if err != nil {
@@ -95,4 +122,13 @@ func TestLstatCloudPlaceholder(t *testing.T) {
 	if !fi.IsDir() || os.FileMode(fi.Mode())&os.ModeIrregular != 0 {
 		t.Errorf("placeholder dir: mode=%v", fi.Mode())
 	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "data" {
+		t.Fatalf("placeholder contents: %q, %v", data, err)
+	}
+}
+
+type irregularCloudInfo struct{ os.FileInfo }
+
+func (fi irregularCloudInfo) Mode() os.FileMode {
+	return fi.FileInfo.Mode() | os.ModeIrregular
 }

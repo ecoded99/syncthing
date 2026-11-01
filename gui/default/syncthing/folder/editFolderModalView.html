@@ -436,6 +436,14 @@
                 Maintain an index of all blocks in the folder, enabling reuse of blocks from other files when syncing changes. Disable to reduce database size at the cost of not being able to reuse blocks across files.
               </p>
             </div>
+            <div class="col-md-6 form-group" ng-if="version.os === 'windows' && currentFolder.filesystemType === 'basic'">
+              <label>
+                <input type="checkbox" ng-model="currentFolder.explorerStatus" /> <span translate>Show Sync Status in Windows Explorer</span>
+              </label>
+              <p translate class="help-block">
+                Show synced, pending, and ignored files in Explorer's Status column. Files stay on this computer. Turning this off removes the Explorer registration.
+              </p>
+            </div>
           </div>
 
           <div class="row" ng-if="currentFolder.syncXattrs || currentFolder.sendXattrs">

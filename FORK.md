@@ -126,6 +126,33 @@ That mode is removed; its `path`, `minFreeBytes` and `ownerID` settings are
 ignored, and existing copies are left untouched. The first Drive API run
 uploads everything again.
 
+## Windows Explorer sync status
+
+On Windows, Edit Folder > Advanced > Show Sync Status in Windows Explorer
+enables status for an individual folder. It is off by default. Explorer's
+Status column shows synced files, pending downloads or pull errors, and
+excluded files matched by `.stignore`. A pending file also marks its parent
+directories pending. Windows marks a local edit pending until Syncthing scans
+it; updates may take a few seconds.
+
+This uses Windows Cloud Files registration rather than overlay-icon slots.
+All file contents remain on disk; this feature does not provide online-only
+files. It requires Windows Cloud Files support and a compatible local
+filesystem. Registration failures are recorded in Syncthing's log. The
+registration belongs to the Windows account running Syncthing.
+
+Turning the option off removes the registration and returns placeholders to
+ordinary files. Exiting Syncthing preserves the registration for its next
+start. Syncthing's internal files and symbolic links are left alone. Existing
+online-only cloud files remain excluded from the scanner's placeholder fix.
+
+The service tests cover status selection, parent propagation, paging, and
+internal-file exclusions. A Windows integration test creates real Cloud Files
+placeholders and checks scanning and readable content. The initial two-instance
+smoke test also checked blocked downloads, edits, restart, disabling the option,
+and unchanged index sequence after enabling it and rescanning. Explorer states
+were checked through shell properties; the icons were not visually inspected.
+
 ## Signed automatic updates
 
 The feed is `https://api.github.com/repos/ecoded99/syncthing/releases`. Enable
