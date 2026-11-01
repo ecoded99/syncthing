@@ -1780,13 +1780,18 @@ func (f *sendReceiveFolder) performFinish(file, curFile protocol.FileInfo, hasCu
 		return fmt.Errorf("checking existing file: %w", err)
 	}
 
+	// Set the timestamp before exposing the file at its live name. Otherwise
+	// a process stop between rename and Chtimes can make the next startup scan
+	// advertise the temporary timestamp as a local edit to every other peer.
+	f.mtimefs.Chtimes(tempName, file.ModTime(), file.ModTime())
+
 	// Replace the original content with the new one. If it didn't work,
 	// leave the temp file in place for reuse.
 	if err := osutil.RenameOrCopy(f.CopyRangeMethod.ToFS(), f.mtimefs, f.mtimefs, tempName, file.Name); err != nil {
 		return fmt.Errorf("replacing file: %w", err)
 	}
 
-	// Set the correct timestamp on the new file
+	// Reapply for filesystems requiring RenameOrCopy's copy fallback.
 	f.mtimefs.Chtimes(file.Name, file.ModTime(), file.ModTime()) // never fails
 
 	// Record the updated file in the index

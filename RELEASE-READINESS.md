@@ -16,6 +16,10 @@ by default, with the existing per-folder checkbox as the rollout control.
   malformed frames and preserve the existing member/data bounds.
 - Verify the candidate with an isolated interrupted receiver and sender
   disconnect/reconnect, checking every received file's SHA-256 and timestamp.
+  Windows CI and the signing workflow enforce this with
+  `script/smoke_bundle_recovery.py`, including existing-file edits, deletions and
+  disabling bundles followed by an ordinary transfer. Transient disconnect
+  errors must clear before convergence passes.
 - Keep the first signed release a prerelease. Tag creation invokes the existing
   signing workflow and publishes to the updater feed; creating a PR does not.
 
@@ -28,6 +32,11 @@ retain ordinary per-member authorization. Staging creates temporary files
 exclusively, rechecks parent traversal immediately before opening, and preserves
 raced-in temporary files. Normal finalization retains fsync, local-edit/conflict
 checks, metadata application and database updates.
+
+The timestamp is applied to the temporary file before its live rename, then
+reapplied after a possible copy fallback. This closes the observed process-stop
+window where restart scanning could advertise the temporary timestamp as a local
+edit. This is not a new guarantee against power failure or filesystem failures.
 
 Cancellation stops new staging without invalidating the remote capability just
 because a local folder stopped. Existing local files, existing temporary files,

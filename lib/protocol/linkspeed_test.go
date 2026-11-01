@@ -77,6 +77,14 @@ func TestLinkSpeedTransport(t *testing.T) {
 		}
 	}
 	stats := c0.Statistics()
+	// io.Pipe can unblock the response reader before countingWriter has
+	// accounted for the final Write return. Wait for that bookkeeping; still
+	// require every payload byte to have crossed the uncompressed transport.
+	deadline = time.Now().Add(time.Second)
+	for (stats.InBytesTotal < result.Download.Bytes || stats.OutBytesTotal < result.Upload.Bytes) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+		stats = c0.Statistics()
+	}
 	if stats.InBytesTotal < result.Download.Bytes || stats.OutBytesTotal < result.Upload.Bytes {
 		t.Fatal("compression inflated the measured throughput", stats, result)
 	}

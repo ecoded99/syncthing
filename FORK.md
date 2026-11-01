@@ -119,6 +119,21 @@ The harness configures only loopback peers, leaves production sync running,
 keeps timings and bundle counters in `results.json`, and verifies contents and
 timestamps outside the timed interval. It starts/stops only its own instances.
 
+Production hardening adds bounded cancellation, a parent-traversal recheck before
+staging, and timestamp application before the live rename. A forced receiver stop
+exposed the old rename/timestamp window; the corrected build recovered all 2,048
+files with their SHA-256 hashes and timestamps intact. A separate sender restart
+also recovered all 2,048 files, cleared transient pull errors, and converged.
+Both scenarios then passed existing-file edits, disabling bundles with continued
+ordinary transfers, and deletion propagation. The full core suite passed locally.
+These checks are enforced by Windows CI and before Windows release signing.
+See `RELEASE-READINESS.md` for rollout gates and rollback instructions; the first
+deployment remains an opt-in canary, with batching disabled by default.
+
+```console
+python script/smoke_bundle_recovery.py --binary /path/to/syncthing --work /new/recovery-dir --files 2048
+```
+
 Native backup, protocol, configuration, upgrade, API, Syncthing service, and model
 unit suites passed locally. Protocol and backup race checks passed. Transport
 tests cover negotiation, stock peers, bounds, truncated/corrupt framing,

@@ -46,6 +46,13 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           & "./${{ matrix.binary }}" --version
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - if: runner.os == 'Windows'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - if: runner.os == 'Windows'
+        name: Verify interrupted-transfer recovery before signing
+        run: python script/smoke_bundle_recovery.py --binary syncthing.exe --work "${{ runner.temp }}/bundle-recovery" --files 2048
       - name: Sign archive
         shell: pwsh
         env:

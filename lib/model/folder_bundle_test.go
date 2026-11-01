@@ -12,10 +12,43 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/syncthing/syncthing/lib/fs"
 	"github.com/syncthing/syncthing/lib/protocol"
 )
+
+type timestampBeforeRenameFS struct {
+	fs.Filesystem
+	t       *testing.T
+	want    time.Time
+	checked bool
+}
+
+func (f *timestampBeforeRenameFS) Rename(from, to string) error {
+	info, err := f.Filesystem.Lstat(from)
+	must(f.t, err)
+	if !info.ModTime().Equal(f.want) {
+		f.t.Fatal("live rename would expose temporary timestamp", info.ModTime(), f.want)
+	}
+	f.checked = true
+	return f.Filesystem.Rename(from, to)
+}
+
+func TestBundleFinishTimestampBeforeRename(t *testing.T) {
+	_, f := setupSendReceiveFolder(t)
+	file := protocol.FileInfo{Name: "new", Size: 4, Permissions: 0o644, ModifiedS: 1700000000}
+	checked := &timestampBeforeRenameFS{Filesystem: f.mtimefs, t: t, want: file.ModTime()}
+	f.mtimefs = checked
+	s, err := f.stageBundleFile(t.Context(), file, []byte("data"))
+	must(t, err)
+	_, err = s.finalClose()
+	must(t, err)
+	must(t, f.performFinish(file, s.curFile, s.hasCurFile, s.tempName, make(chan dbUpdateJob, 1), make(chan string, 1)))
+	if !checked.checked {
+		t.Fatal("rename checkpoint not exercised")
+	}
+}
 
 func TestBundleStagingRechecksParent(t *testing.T) {
 	_, f := setupSendReceiveFolder(t)

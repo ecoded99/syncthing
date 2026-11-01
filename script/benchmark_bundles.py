@@ -50,7 +50,8 @@ def transfer(src,dst,run,expected_files,expected_bytes):
     try:
         for home in (homea,homeb):
             log=open(home/'console.log','wb'); logs.append(log)
-            procs.append(subprocess.Popen([str(EXE),'serve','--home',str(home),'--no-browser','--no-tray','--no-restart','--no-upgrade','--log-file=-'],env=ENV,stdout=log,stderr=subprocess.STDOUT,creationflags=subprocess.CREATE_NO_WINDOW))
+            options={'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {}
+            procs.append(subprocess.Popen([str(EXE),'serve','--home',str(home),'--no-browser','--no-tray','--no-restart','--no-upgrade','--log-file=-'],env=ENV,stdout=log,stderr=subprocess.STDOUT,**options))
         while time.perf_counter()-start<600:
             if any(p.poll() is not None for p in procs): raise RuntimeError('Benchmark instance exited; inspect console.log')
             try:
@@ -93,42 +94,48 @@ def verify(dst,manifest):
         assert abs(p.stat().st_mtime_ns-stamp)<=1000,(name,'mtime')
 
 
-import argparse
-parser=argparse.ArgumentParser(description='Compare durable ordinary sync and explicit whole-file bundles over loopback.')
-parser.add_argument('--binary',required=True,type=Path)
-parser.add_argument('--baseline-binary',type=Path,help='Compare an older bundle build with --binary, enabling bundles in both.')
-parser.add_argument('--work',required=True,type=Path)
-parser.add_argument('--files',type=int,default=8192)
-parser.add_argument('--trials',type=int,default=3)
-args=parser.parse_args()
-if args.files < 1 or args.trials < 1: parser.error('--files and --trials must be positive')
-ROOT=args.work.resolve(); EXE=args.binary.resolve(); N=args.files
-if ROOT.exists(): raise SystemExit('--work must be a new directory')
-ROOT.mkdir(parents=True)
-fixture=ROOT/'fixture'; fixture.mkdir(); manifest={}
-for i in range(N):
-    p=fixture/f'dir-{i//64:03d}'/f'file-{i:05d}.bin'; p.parent.mkdir(exist_ok=True)
-    data=os.urandom(SIZE); p.write_bytes(data); os.utime(p,ns=(1700000000000000000,1700000000000000000))
-    manifest[p.relative_to(fixture).as_posix()]=(hashlib.sha256(data).hexdigest(),p.stat().st_mtime_ns)
-base_setup=setup
-mode=False
-def setup(*setup_args):
-    identity,key=base_setup(*setup_args)
-    tree=ET.parse(setup_args[0]/'config.xml'); c=tree.getroot()
-    c.find('folder/experimentalBatchedTransfers').text=str(mode or args.baseline_binary is not None).lower()
-    tree.write(setup_args[0]/'config.xml',encoding='utf-8',xml_declaration=True)
-    return identity,key
+def main():
+    global ROOT, EXE, N, setup, mode, args
+    import argparse
+    parser=argparse.ArgumentParser(description='Compare durable ordinary sync and explicit whole-file bundles over loopback.')
+    parser.add_argument('--binary',required=True,type=Path)
+    parser.add_argument('--baseline-binary',type=Path,help='Compare an older bundle build with --binary, enabling bundles in both.')
+    parser.add_argument('--work',required=True,type=Path)
+    parser.add_argument('--files',type=int,default=8192)
+    parser.add_argument('--trials',type=int,default=3)
+    args=parser.parse_args()
+    if args.files < 1 or args.trials < 1: parser.error('--files and --trials must be positive')
+    ROOT=args.work.resolve(); EXE=args.binary.resolve(); N=args.files
+    if ROOT.exists(): raise SystemExit('--work must be a new directory')
+    ROOT.mkdir(parents=True)
+    fixture=ROOT/'fixture'; fixture.mkdir(); manifest={}
+    for i in range(N):
+        p=fixture/f'dir-{i//64:03d}'/f'file-{i:05d}.bin'; p.parent.mkdir(exist_ok=True)
+        data=os.urandom(SIZE); p.write_bytes(data); os.utime(p,ns=(1700000000000000000,1700000000000000000))
+        manifest[p.relative_to(fixture).as_posix()]=(hashlib.sha256(data).hexdigest(),p.stat().st_mtime_ns)
+    base_setup=setup
+    mode=False
+    def setup(*setup_args):
+        identity,key=base_setup(*setup_args)
+        tree=ET.parse(setup_args[0]/'config.xml'); c=tree.getroot()
+        c.find('folder/experimentalBatchedTransfers').text=str(mode or args.baseline_binary is not None).lower()
+        tree.write(setup_args[0]/'config.xml',encoding='utf-8',xml_declaration=True)
+        return identity,key
 
-rows=[]
-labels=['before','after'] if args.baseline_binary else ['ordinary','bundle']
-for trial in range(1,args.trials+1):
-    order=[False,True] if trial%2 else [True,False]
-    for mode in order:
-        EXE=(args.binary if mode or args.baseline_binary is None else args.baseline_binary).resolve()
-        label=labels[int(mode)]
-        run=ROOT/f"{trial}-{label}"
-        run.mkdir(); dst=run/'received'; dst.mkdir()
-        elapsed=transfer(fixture,dst,run,N,N*SIZE); verify(dst,manifest)
-        row=dict(trial=trial,mode=label,seconds=elapsed,verified=N,bundle_requests=last_bundle_requests)
-        rows.append(row); (ROOT/'results.json').write_text(json.dumps(rows,indent=2)); emit(row)
-emit({mode:statistics.median(r['seconds'] for r in rows if r['mode']==mode) for mode in labels})
+    rows=[]
+    labels=['before','after'] if args.baseline_binary else ['ordinary','bundle']
+    for trial in range(1,args.trials+1):
+        order=[False,True] if trial%2 else [True,False]
+        for mode in order:
+            EXE=(args.binary if mode or args.baseline_binary is None else args.baseline_binary).resolve()
+            label=labels[int(mode)]
+            run=ROOT/f"{trial}-{label}"
+            run.mkdir(); dst=run/'received'; dst.mkdir()
+            elapsed=transfer(fixture,dst,run,N,N*SIZE); verify(dst,manifest)
+            row=dict(trial=trial,mode=label,seconds=elapsed,verified=N,bundle_requests=last_bundle_requests)
+            rows.append(row); (ROOT/'results.json').write_text(json.dumps(rows,indent=2)); emit(row)
+    emit({mode:statistics.median(r['seconds'] for r in rows if r['mode']==mode) for mode in labels})
+
+
+if __name__ == '__main__':
+    main()
