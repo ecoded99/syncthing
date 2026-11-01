@@ -153,6 +153,14 @@ smoke test also checked blocked downloads, edits, restart, disabling the option,
 and unchanged index sequence after enabling it and rescanning. Explorer states
 were checked through shell properties; the icons were not visually inspected.
 
+## Modern theme
+
+The web UI uses the `modern` theme by default. New configurations get it
+directly; on first start after updating, an install still on the stock
+`default` theme is switched to `modern` once (recorded in the database as
+`forkModernThemeApplied`). A theme picked in Settings afterwards, including
+`default`, is kept.
+
 ## Signed automatic updates
 
 The feed is `https://api.github.com/repos/ecoded99/syncthing/releases`. Enable
