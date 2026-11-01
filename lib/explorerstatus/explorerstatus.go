@@ -151,8 +151,7 @@ func (s *Service) reconcile(ctx context.Context) {
 		}
 	}
 	for id, f := range s.folders {
-		if fcfg, ok := want[id]; ok && fcfg.Path == f.cfg.Path {
-			f.cfg = fcfg
+		if fcfg, ok := want[id]; ok && fcfg.Path == f.cfg.Path && fcfg.Label == f.cfg.Label {
 			continue
 		}
 		f.stop(true)
