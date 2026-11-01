@@ -11,6 +11,19 @@ which still checks its hash and applies the usual conflict, metadata, and
 per-file durability rules. Encrypted folders and stock peers use ordinary reads.
 There is no direct unpacking over live folders. Batching is disabled by default.
 
+## Link speed tests
+
+Expand a connected device under Remote Devices and click **Test Link Speed**
+beside Pause and Edit. Both devices must run `v2.1.7-ecoded.8` or later.
+The results show download from and upload to that peer, in Mbps, from the
+perspective of the device whose GUI is open.
+
+The test sends random data over the existing authenticated sync connections;
+it does not create or change synced files. It sends at most 64 MiB per direction
+and times out after 20 seconds. One test can run at a time from each GUI server.
+Active sync traffic, relay connections, and configured bandwidth limits affect
+the measured application throughput. Older peers report that tests are unsupported.
+
 ## Validation
 
 On a Windows loopback fixture of 8,192 random 16 KiB files (128 MiB), three
@@ -186,6 +199,10 @@ contains everything included from the source, potentially including sensitive
 files: choose its sharing accordingly. Drive's per-user write rate means
 folders with many small files take a long first run.
 
+On macOS, the standard system aliases `/var`, `/tmp`, and `/etc` are resolved
+to their expected `/private` paths before source validation. Other symlinks,
+including links within the source folder, remain excluded.
+
 Authenticated endpoints:
 
 - `GET /rest/folder/cloudbackup?folder=ID`: current status and Drive folder link.
@@ -237,19 +254,46 @@ smoke test also checked blocked downloads, edits, restart, disabling the option,
 and unchanged index sequence after enabling it and rescanning. Explorer states
 were checked through shell properties; the icons were not visually inspected.
 
+## Modern theme
+
+The web UI uses the `modern` theme by default. New configurations get it
+directly; on first start after updating, an install still on the stock
+`default` theme is switched to `modern` once (recorded in the database as
+`forkModernThemeApplied`). A theme picked in Settings afterwards, including
+`default`, is kept.
+
 ## Signed automatic updates
 
-The feed is `https://api.github.com/repos/ecoded99/syncthing/releases`. Enable
+The feed is `https://raw.githubusercontent.com/ecoded99/syncthing/update-feed/releases.json`.
+It is refreshed after each signed release and served without GitHub REST API
+quotas. Archive URLs point directly to public release downloads; the native
+updater still verifies their signatures against its embedded public key.
+Existing installations using the GitHub API feed can set Releases URL under
+Actions > Advanced > Options to this address without restarting.
+Enable
 Automatic Upgrades in Syncthing settings and allow prereleases on canary PCs.
 Versions named `vX.Y.Z-ecoded.N` are built and signed by the fork workflow.
-Stable-channel PCs wait until a release is promoted out of prerelease. Windows
-amd64 is the initial supported release platform.
+Stable-channel PCs wait until a release is promoted out of prerelease. The release
+workflow builds Windows amd64, macOS Apple Silicon (arm64), and macOS Intel
+(amd64), and runs the fork's tests natively on each platform before publishing.
 
-Archives contain `syncthing.exe` and `release.sig`. The signature covers the
-archive filename, a newline, and the executable bytes using the native updater's
+Windows archives contain `syncthing.exe`; macOS archives contain `syncthing`
+with executable permissions. Both include `release.sig`, `LICENSE`, and
+`FORK.md`. macOS ZIPs are named `syncthing-macos-arm64-vX.Y.Z-ecoded.N.zip`
+or `syncthing-macos-amd64-vX.Y.Z-ecoded.N.zip` so the native updater can select
+the correct build. `SHA256SUMS.txt` covers all three release archives.
+The signature covers the archive filename, a newline, and the executable bytes
+using the native updater's
 verification format. The fork public key is embedded in the binary; its PEM
 SHA-256 is `afdf6df1b1d5584f46499243b94c067571fecb44b1e814b1ab5a49ca723e831c`.
 The private key is never included in source or release artifacts.
+
+On macOS, extract the matching archive and run `./syncthing` from Terminal;
+the browser GUI provides sync, Drive backup, and manual update checks. The tray
+icon, Explorer status integration, and power-throttling opt-out are Windows-only.
+These macOS releases are command-line executables, not app bundles, and are not
+signed with an Apple Developer ID or notarized. The fork's updater signature is
+separate from Apple's code signing.
 
 The native updater saves the previous executable with an `.old` suffix. This is
 not an automatic health-check rollback. Preserve config and database backups

@@ -8,11 +8,13 @@ package upgrade
 import (
 	"archive/zip"
 	"bytes"
-	"github.com/syncthing/syncthing/lib/signature"
+	"fmt"
 	"io"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/syncthing/syncthing/lib/signature"
 )
 
 func TestForkSignedArchive(t *testing.T) {
@@ -23,7 +25,20 @@ func TestForkSignedArchive(t *testing.T) {
 	previous := SigningKey
 	SigningKey = public
 	t.Cleanup(func() { SigningKey = previous })
-	name := "syncthing-windows-amd64-v2.1.7-ecoded.1.zip"
+	for _, platform := range []string{"windows-amd64", "macos-arm64", "macos-amd64"} {
+		t.Run(platform, func(t *testing.T) {
+			testForkSignedArchive(t, private, platform)
+		})
+	}
+}
+
+func testForkSignedArchive(t *testing.T, private []byte, platform string) {
+	t.Helper()
+	name := fmt.Sprintf("syncthing-%s-v2.1.7-ecoded.1.zip", platform)
+	binaryName := "syncthing"
+	if strings.HasPrefix(platform, "windows-") {
+		binaryName += ".exe"
+	}
 	binary := []byte("disposable executable fixture")
 	sig, err := signature.Sign(private, io.MultiReader(strings.NewReader(name+"\n"), bytes.NewReader(binary)))
 	if err != nil {
@@ -32,7 +47,7 @@ func TestForkSignedArchive(t *testing.T) {
 	archive := func(data []byte) []byte {
 		var b bytes.Buffer
 		w := zip.NewWriter(&b)
-		f, _ := w.Create("syncthing.exe")
+		f, _ := w.Create(binaryName)
 		f.Write(data)
 		f, _ = w.Create("release.sig")
 		f.Write(sig)
@@ -51,7 +66,12 @@ func TestForkSignedArchive(t *testing.T) {
 	if _, err := readZip(name, dir, bytes.NewReader(archive([]byte("tampered executable")))); err == nil {
 		t.Fatal("tampered binary accepted")
 	}
-	if _, err := readZip("syncthing-windows-amd64-v2.1.7-ecoded.2.zip", dir, bytes.NewReader(archive(binary))); err == nil {
-		t.Fatal("renamed release accepted")
+	for _, renamed := range []string{
+		strings.Replace(name, "ecoded.1", "ecoded.2", 1),
+		strings.Replace(name, platform, "linux-amd64", 1),
+	} {
+		if _, err := readZip(renamed, dir, bytes.NewReader(archive(binary))); err == nil {
+			t.Fatalf("renamed release accepted: %s", renamed)
+		}
 	}
 }
