@@ -9,11 +9,54 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/syncthing/syncthing/lib/fs"
 	"github.com/syncthing/syncthing/lib/protocol"
 )
+
+func TestBundleStagingRechecksParent(t *testing.T) {
+	_, f := setupSendReceiveFolder(t)
+	outside := t.TempDir()
+	if err := f.mtimefs.CreateSymlink(outside, "parent"); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	s, err := f.stageBundleFile(t.Context(), protocol.FileInfo{Name: filepath.Join("parent", "new"), Size: 4}, []byte("data"))
+	if err == nil || s != nil {
+		t.Fatal("staged through changed symlink parent")
+	}
+	entries, err := os.ReadDir(outside)
+	must(t, err)
+	if len(entries) != 0 {
+		t.Fatal("created file outside sync root")
+	}
+}
+
+func TestBundleStagingPreservesExistingTemp(t *testing.T) {
+	_, f := setupSendReceiveFolder(t)
+	file := protocol.FileInfo{Name: "new", Size: 4, Permissions: 0o644}
+	name := fs.TempName(file.Name)
+	writeFile(t, f.mtimefs, name, []byte("resumable content"))
+	s, err := f.stageBundleFile(t.Context(), file, []byte("data"))
+	must(t, err)
+	if s.failed() == nil {
+		t.Fatal("replaced existing temporary file")
+	}
+	_, closeErr := s.finalClose()
+	if closeErr == nil {
+		t.Fatal("temporary collision marked successful")
+	}
+	fd, err := f.mtimefs.Open(name)
+	must(t, err)
+	defer fd.Close()
+	data, err := io.ReadAll(fd)
+	must(t, err)
+	if string(data) != "resumable content" {
+		t.Fatal("destroyed resumable content")
+	}
+}
 
 func TestParallelBundleStaging(t *testing.T) {
 	for _, canceled := range []bool{false, true} {

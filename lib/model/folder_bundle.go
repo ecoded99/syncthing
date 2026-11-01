@@ -6,11 +6,13 @@ package model
 import (
 	"context"
 	"crypto/sha256"
+	"path/filepath"
 	"sync"
 
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/fs"
+	"github.com/syncthing/syncthing/lib/osutil"
 	"github.com/syncthing/syncthing/lib/protocol"
 )
 
@@ -128,6 +130,14 @@ func (f *sendReceiveFolder) stageBundleMember(ctx context.Context, file protocol
 }
 
 func (f *sendReceiveFolder) stageBundleFile(ctx context.Context, file protocol.FileInfo, data []byte) (*sharedPullerState, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// A bundle may have waited behind network and disk work since checkParent.
+	// Recheck immediately before opening its temporary path.
+	if err := osutil.TraversesSymlink(f.mtimefs, filepath.Dir(file.Name)); err != nil {
+		return nil, err
+	}
 	cur, exists, err := f.model.sdb.GetDeviceFile(f.folderID, protocol.LocalDeviceID, file.Name)
 	if err != nil {
 		return nil, err

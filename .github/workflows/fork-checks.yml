@@ -22,3 +22,9 @@ jobs:
       - run: go test ./cmd/dev/forkrelease ./cmd/syncthing ./internal/db/sqlite ./lib/cloudbackup ./lib/config ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/osutil ./lib/fs ./lib/explorerstatus
       - if: runner.os != 'Windows'
         run: go test -race ./lib/cloudbackup ./lib/protocol
+      - if: runner.os != 'Windows'
+        run: go test -race ./lib/model -run 'Test.*Bundle' -count=1
+      - if: runner.os == 'Linux'
+        run: go test ./lib/protocol -run '^$' -fuzz '^FuzzBatchRequestDecoder$' -fuzztime 10s
+      - if: runner.os == 'Linux'
+        run: go test ./lib/protocol -run '^$' -fuzz '^FuzzBatchResponseDecoder$' -fuzztime 10s

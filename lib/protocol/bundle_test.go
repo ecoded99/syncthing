@@ -56,7 +56,7 @@ func TestExplicitBundle(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := RequestBundle(ctx, c0, requests); err == nil {
+	if _, err := RequestBundle(ctx, c0, requests); !errors.Is(err, context.Canceled) {
 		t.Fatal("ignored cancellation")
 	}
 	// Folder encryption must never be bypassed by the explicit fast path.
@@ -65,4 +65,23 @@ func TestExplicitBundle(t *testing.T) {
 	if _, err := RequestBundle(t.Context(), c0, requests); !errors.Is(err, ErrBundleUnavailable) {
 		t.Fatal("encrypted folder bundled", err)
 	}
+}
+
+func FuzzBatchResponseDecoder(f *testing.F) {
+	f.Add([]byte{'S', 'T', 'R', '1', 2, 0, 4, 'd', 'a', 't', 'a', 0, 4, 'd', 'a', 't', 'a'})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		requests := []*Request{batchFixture("a"), batchFixture("b")}
+		results, err := decodeBatchResults(data, requests)
+		if err != nil {
+			return
+		}
+		if len(results) != len(requests) {
+			t.Fatal("result count mismatch")
+		}
+		for i, result := range results {
+			if result.err == nil && len(result.val) != requests[i].Size || result.err != nil && len(result.val) != 0 {
+				t.Fatal("invalid successful decode")
+			}
+		}
+	})
 }

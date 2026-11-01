@@ -30,6 +30,9 @@ type BundleResult struct {
 // coincident block requests. It uses the negotiated, bounded STB1/STR1 container;
 // no peer-supplied archive paths are ever extracted onto the filesystem.
 func RequestBundle(ctx context.Context, conn Connection, requests []Request) ([]BundleResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	c, ok := conn.(wireFormatConnection)
@@ -58,7 +61,9 @@ func RequestBundle(ctx context.Context, conn Connection, requests []Request) ([]
 	h := sha256.Sum256(payload)
 	data, err := e.conn.requestDirect(ctx, &Request{Name: batchName, Size: size, Hash: h[:], batchPayload: payload})
 	if err != nil {
-		e.conn.peerBatch.Store(false)
+		if ctx.Err() == nil {
+			e.conn.peerBatch.Store(false)
+		}
 		return nil, err
 	}
 	decoded, err := decodeBatchResults(data, reqs)
