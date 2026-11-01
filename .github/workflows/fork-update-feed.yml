@@ -1,0 +1,25 @@
+name: Refresh public updater feed
+on:
+  workflow_call:
+  workflow_dispatch:
+  release:
+    types: [published, edited, deleted, released, prereleased]
+permissions:
+  contents: write
+concurrency:
+  group: fork-update-feed
+  cancel-in-progress: false
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish release metadata without GitHub API download URLs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/$GH_REPO/releases?per_page=20" --jq '[.[] | select(.draft == false) | {tag_name, prerelease, html_url, assets: [.assets[] | select(.name|endswith(".zip")) | {name, url: .browser_download_url, browser_download_url}]}]' > releases.json
+          jq -e 'type == "array" and length > 0 and all(.[]; (.tag_name | startswith("v")) and (.assets | length > 0) and all(.assets[]; .url | startswith("https://github.com/" + env.GH_REPO + "/releases/download/")))' releases.json > /dev/null
+          feed_sha=$(gh api "repos/$GH_REPO/contents/releases.json?ref=update-feed" --jq .sha)
+          jq -n --arg branch update-feed --arg sha "$feed_sha" --arg message "Refresh signed updater feed" --arg content "$(base64 -w0 releases.json)" '{branch:$branch,sha:$sha,message:$message,content:$content}' > feed-update.json
+          gh api --method PUT "repos/$GH_REPO/contents/releases.json" --input feed-update.json > /dev/null

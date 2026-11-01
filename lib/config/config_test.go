@@ -77,7 +77,7 @@ func TestDefaultValues(t *testing.T) {
 			MinHomeDiskFree:           Size{1, "%"},
 			URURL:                     "https://data.syncthing.net/newdata",
 			URInitialDelayS:           1800,
-			ReleasesURL:               "https://api.github.com/repos/ecoded99/syncthing/releases",
+			ReleasesURL:               "https://raw.githubusercontent.com/ecoded99/syncthing/update-feed/releases.json",
 			AlwaysLocalNets:           []string{},
 			OverwriteRemoteDevNames:   false,
 			TempIndexMinBlocks:        10,
