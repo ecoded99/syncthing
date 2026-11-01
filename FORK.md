@@ -35,6 +35,105 @@ activity; these figures reject an improvement claim, rather than establish a
 precise performance difference. Reducing messages does not eliminate the
 receiving filesystem's per-file work.
 
+### Experimental whole-file bundle pipeline
+
+With the per-folder `experimentalBatchedTransfers` setting enabled, initial
+copies of small files now use an explicit model-level bundle pipeline rather
+than relying only on coincident block requests. It collects up to 32 regular
+files of at most 64 KiB each (2 MiB of content), pins a compatible connection,
+and requests them in one bounded STB1/STR1 frame. The local index snapshot is
+the manifest of names, versions, metadata, sizes and hashes. Successful members
+are all hash-verified before any member is staged. The sender authorizes and
+reads each member through its ordinary request handler.
+
+Verified content is written into exclusively created Syncthing temporary files.
+The normal finisher performs fsync, local-change/conflict checks, replacement,
+metadata application and batched database updates. While enabled, finishing
+concurrency can increase to eight, bounded by `maxConcurrentWrites`; an existing
+higher `copiers` setting is retained. Per-file durability is not disabled. Bundle
+payloads and staging/application queues are bounded independently of tree size.
+No general-purpose archive extractor runs against live folders.
+
+This path targets initial copies: existing local files, existing temporary files,
+large/multiblock files, empty/all-zero files and encrypted folders retain their
+ordinary path. Stock peers retain ordinary requests. Failed bundles or member
+reads retry through the ordinary copier/puller, which can select another source.
+Interrupted staged files retain the ordinary temporary-file recovery behavior;
+an interrupted in-memory bundle is requested again. There is no persistent
+archive checkpoint or whole-bundle atomic commit. The option remains off by default.
+
+The optimized receiver separates downloading, staging and durable finalization.
+It prefetches one verified bundle while up to eight bounded staging workers
+create temporary files, and uses bundle-sized queues between finishing and index
+updates. At most three bundle payloads are active (6 MiB of file content, excluding
+protocol overhead), independently of folder size. The already-computed source
+availability is reused instead of querying the database twice per candidate.
+Hash verification, fsync and conflict checks remain enabled.
+
+A receiver profile of the first implementation showed filesystem calls dominating
+the samples, with some finishers waiting while the sole staging worker created a
+temporary file. Alternating before/after trials against commit `ef4a56808` with
+bundles enabled in both builds measured the following for 4,096 random 16 KiB files:
+
+| Trial | Previous bundle pipeline | Optimized pipeline |
+| --- | ---: | ---: |
+| 1 | 16.85 s | 13.52 s |
+| 2 | 15.99 s | 13.60 s |
+| 3 | 15.98 s | 13.13 s |
+| Median | 15.99 s | 13.52 s |
+
+The median elapsed time decreased by 15.4%. All 24,576 received file instances
+passed SHA-256 and timestamp verification; all runs reported bundle usage.
+This is a same-drive Windows loopback measurement with background applications
+running, not a prediction for WAN transfers. Timings include startup, scanning
+and index exchange; verification is outside the timed interval.
+
+To compare two bundle builds with the reusable harness, pass
+`--baseline-binary /path/to/previous/syncthing` alongside `--binary`. This enables
+bundles for both builds and alternates their run order.
+
+Three Windows same-drive loopback trials of 2,048 random 16 KiB files measured
+11.43, 10.21 and 10.10 seconds with ordinary sync, versus 10.62, 14.40 and 9.69
+seconds with bundles. All 12,288 received files passed SHA-256 and timestamp
+verification; receiver counters confirmed bundles were used (52, 64 and 50
+frames). Times include startup, scans and index exchange. Production sync and
+other applications remained running and caches were not cleared. These ranges
+overlap: the durable pipeline is **not a validated speed improvement**, and
+the result is not a WAN measurement. It must not be confused with a plain TAR
+copy that omits normal sync finalization.
+
+A final smoke test of 8,192 random 16 KiB files measured 65.69 seconds with
+ordinary sync and 32.79 seconds with the complete bundle pipeline. It used
+exactly 256 bundle frames; all 16,384 received file instances passed content
+and timestamp verification. This single larger pair is promising but does not
+establish a repeatable speedup given the mixed smaller trials and background
+disk activity.
+
+Reproduce against an isolated executable and a new disposable directory:
+
+```console
+python script/benchmark_bundles.py --binary /path/to/syncthing --work /new/benchmark-dir --files 2048 --trials 3
+```
+
+The harness configures only loopback peers, leaves production sync running,
+keeps timings and bundle counters in `results.json`, and verifies contents and
+timestamps outside the timed interval. It starts/stops only its own instances.
+
+Production hardening adds bounded cancellation, a parent-traversal recheck before
+staging, and timestamp application before the live rename. A forced receiver stop
+exposed the old rename/timestamp window; the corrected build recovered all 2,048
+files with their SHA-256 hashes and timestamps intact. A separate sender restart
+also recovered all 2,048 files, cleared transient pull errors, and converged.
+Both scenarios then passed existing-file edits, disabling bundles with continued
+ordinary transfers, and deletion propagation. The full core suite passed locally.
+These checks are enforced by Windows CI and before Windows release signing.
+See `RELEASE-READINESS.md` for rollout gates and rollback instructions; the first
+deployment remains an opt-in canary, with batching disabled by default.
+
+```console
+python script/smoke_bundle_recovery.py --binary /path/to/syncthing --work /new/recovery-dir --files 2048
+```
+
 Native backup, protocol, configuration, upgrade, API, Syncthing service, and model
 unit suites passed locally. Protocol and backup race checks passed. Transport
 tests cover negotiation, stock peers, bounds, truncated/corrupt framing,

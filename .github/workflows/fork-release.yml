@@ -37,6 +37,8 @@ jobs:
           if ($env:GITHUB_REF_NAME -notmatch '^v\d+\.\d+\.\d+-ecoded\.\d+$') { throw 'Invalid fork version' }
       - run: go run build.go assets
       - run: go test ./cmd/dev/forkrelease ./cmd/syncthing ./internal/db/sqlite ./lib/cloudbackup ./lib/config ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/osutil ./lib/fs ./lib/explorerstatus
+      - if: runner.os != 'Windows'
+        run: go test -race ./lib/protocol ./lib/model -run 'Test.*Bundle|TestBatch' -count=1
       - name: Build ${{ matrix.platform }}
         shell: pwsh
         run: |
@@ -44,6 +46,13 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           & "./${{ matrix.binary }}" --version
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - if: runner.os == 'Windows'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - if: runner.os == 'Windows'
+        name: Verify interrupted-transfer recovery before signing
+        run: python script/smoke_bundle_recovery.py --binary syncthing.exe --work "${{ runner.temp }}/bundle-recovery" --files 2048
       - name: Sign archive
         shell: pwsh
         env:
@@ -76,7 +85,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "$GITHUB_REF_NAME" release/* --prerelease --title "$GITHUB_REF_NAME" --notes 'Adds Test Link Speed beside Pause/Edit on connected remote devices, showing download and upload throughput in Mbps. Update both devices to this release to run tests. Tests use existing authenticated connections, send at most 64 MiB per direction, and time out after 20 seconds. Includes signed updater archives for Windows amd64, macOS Apple Silicon (arm64), and macOS Intel (amd64). Existing Drive backup, Explorer integration, and optional small-file batching are retained. macOS binaries are not Apple Developer ID signed or notarized; tray and Explorer integration are Windows-only. Enable prerelease updates to receive this release through Check for Updates. See FORK.md for details.'
+          gh release create "$GITHUB_REF_NAME" release/* --prerelease --title "$GITHUB_REF_NAME" --notes 'Adds bounded whole-file bundles for initial small-file copies, with overlapped downloading, parallel staging, normal hash verification, conflict handling and durable finalization. Enable Experimental batched small-file transfers per folder to opt in; it remains disabled by default. Existing files, resumable temporary files, encrypted folders and stock peers retain ordinary transfers. Includes current update-feed fixes, link speed tests and signed updater archives for Windows amd64, macOS Apple Silicon and macOS Intel. macOS binaries are not Apple Developer ID signed or notarized. Enable prerelease updates only on canary devices first. See FORK.md and RELEASE-READINESS.md for validation and rollout instructions.'
   update-feed:
     needs: publish
     permissions:

@@ -251,8 +251,14 @@ func (f *sendReceiveFolder) pullerIteration(ctx context.Context, scanChan chan<-
 
 	pullChan := make(chan pullBlockState, f.Copiers)
 	copyChan := make(chan copyBlocksState, f.Copiers)
-	finisherChan := make(chan *sharedPullerState, f.Copiers)
-	dbUpdateChan := make(chan dbUpdateJob, f.Copiers)
+	finishBuffer := f.Copiers
+	if f.ExperimentalBatchedTransfers && f.Type != config.FolderTypeReceiveEncrypted {
+		finishBuffer = max(finishBuffer, protocol.BundleMaxFiles)
+	}
+	finisherChan := make(chan *sharedPullerState, finishBuffer)
+	dbUpdateChan := make(chan dbUpdateJob, finishBuffer)
+	bundleChan := make(chan fileBundle, 1)
+	var bundleWg sync.WaitGroup
 
 	var pullWg sync.WaitGroup
 	var copyWg sync.WaitGroup
@@ -280,13 +286,22 @@ func (f *sendReceiveFolder) pullerIteration(ctx context.Context, scanChan chan<-
 	})
 
 	// finisherRoutine finishes when finisherChan is closed
-	for range f.Copiers {
+	finishers := f.Copiers
+	if f.ExperimentalBatchedTransfers && f.Type != config.FolderTypeReceiveEncrypted {
+		// Bound concurrent durable file application without serially flushing
+		// a complete bundle or weakening per-file crash guarantees.
+		finishers = max(finishers, min(8, f.MaxConcurrentWrites))
+	}
+	for range finishers {
 		doneWg.Go(func() {
 			f.finisherRoutine(ctx, finisherChan, dbUpdateChan, scanChan)
 		})
 	}
 
-	fileDeletions, dirDeletions, err := f.processNeeded(ctx, dbUpdateChan, copyChan, scanChan)
+	bundleWg.Go(func() { f.bundleRoutine(ctx, bundleChan, copyChan, finisherChan) })
+	fileDeletions, dirDeletions, err := f.processNeeded(ctx, dbUpdateChan, copyChan, scanChan, bundleChan)
+	close(bundleChan)
+	bundleWg.Wait() // Fallback sends must finish before copyChan is closed.
 
 	// Signal copy and puller routines that we are done with the in data for
 	// this iteration. Wait for them to finish.
@@ -313,7 +328,19 @@ func (f *sendReceiveFolder) pullerIteration(ctx context.Context, scanChan chan<-
 	return changed, err
 }
 
-func (f *sendReceiveFolder) processNeeded(ctx context.Context, dbUpdateChan chan<- dbUpdateJob, copyChan chan<- copyBlocksState, scanChan chan<- string) (map[string]protocol.FileInfo, []protocol.FileInfo, error) {
+func (f *sendReceiveFolder) processNeeded(ctx context.Context, dbUpdateChan chan<- dbUpdateJob, copyChan chan<- copyBlocksState, scanChan chan<- string, bundleChan chan<- fileBundle) (map[string]protocol.FileInfo, []protocol.FileInfo, error) {
+	var bundle fileBundle
+	flushBundle := func() {
+		if len(bundle.files) == 0 {
+			return
+		}
+		select {
+		case bundleChan <- bundle:
+		case <-ctx.Done():
+		}
+		bundle = fileBundle{}
+	}
+	defer flushBundle()
 	var dirDeletions []protocol.FileInfo
 	fileDeletions := map[string]protocol.FileInfo{}
 	buckets := map[string][]protocol.FileInfo{}
@@ -506,6 +533,17 @@ nextFile:
 			continue
 		}
 
+		if conn := f.bundleConnection(fi, bundle.conn, devices); conn != nil {
+			if bundle.conn != nil && bundle.conn.ConnectionID() != conn.ConnectionID() {
+				flushBundle()
+			}
+			bundle.conn = conn
+			bundle.files = append(bundle.files, fi)
+			if len(bundle.files) == protocol.BundleMaxFiles {
+				flushBundle()
+			}
+			continue
+		}
 		if err := f.handleFile(ctx, fi, copyChan); err != nil {
 			f.newPullError(fileName, err)
 		}
@@ -1742,13 +1780,18 @@ func (f *sendReceiveFolder) performFinish(file, curFile protocol.FileInfo, hasCu
 		return fmt.Errorf("checking existing file: %w", err)
 	}
 
+	// Set the timestamp before exposing the file at its live name. Otherwise
+	// a process stop between rename and Chtimes can make the next startup scan
+	// advertise the temporary timestamp as a local edit to every other peer.
+	f.mtimefs.Chtimes(tempName, file.ModTime(), file.ModTime())
+
 	// Replace the original content with the new one. If it didn't work,
 	// leave the temp file in place for reuse.
 	if err := osutil.RenameOrCopy(f.CopyRangeMethod.ToFS(), f.mtimefs, f.mtimefs, tempName, file.Name); err != nil {
 		return fmt.Errorf("replacing file: %w", err)
 	}
 
-	// Set the correct timestamp on the new file
+	// Reapply for filesystems requiring RenameOrCopy's copy fallback.
 	f.mtimefs.Chtimes(file.Name, file.ModTime(), file.ModTime()) // never fails
 
 	// Record the updated file in the index

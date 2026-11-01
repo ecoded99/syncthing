@@ -8,6 +8,7 @@ permissions:
 jobs:
   test:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-15, macos-15-intel]
     runs-on: ${{ matrix.os }}
@@ -20,5 +21,26 @@ jobs:
       - run: go run build.go assets
       - run: go build ./cmd/syncthing
       - run: go test ./cmd/dev/forkrelease ./cmd/syncthing ./internal/db/sqlite ./lib/cloudbackup ./lib/config ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/osutil ./lib/fs ./lib/explorerstatus
+      - if: runner.os == 'Windows'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - if: runner.os == 'Windows'
+        name: Bundle interrupted-transfer recovery
+        run: python script/smoke_bundle_recovery.py --binary syncthing.exe --work "${{ runner.temp }}/bundle-recovery" --files 2048
+      - if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-recovery-windows
+          path: |
+            ${{ runner.temp }}/bundle-recovery/results.json
+            ${{ runner.temp }}/bundle-recovery/**/console.log
+          if-no-files-found: ignore
       - if: runner.os != 'Windows'
         run: go test -race ./lib/cloudbackup ./lib/protocol
+      - if: runner.os != 'Windows'
+        run: go test -race ./lib/model -run 'Test.*Bundle' -count=1
+      - if: runner.os == 'Linux'
+        run: go test ./lib/protocol -run '^$' -fuzz '^FuzzBatchRequestDecoder$' -fuzztime 10s
+      - if: runner.os == 'Linux'
+        run: go test ./lib/protocol -run '^$' -fuzz '^FuzzBatchResponseDecoder$' -fuzztime 10s
