@@ -4,6 +4,7 @@
 import os, sys, time, json, hashlib, subprocess, socket, shutil, urllib.request, xml.etree.ElementTree as ET, statistics
 from pathlib import Path
 ROOT=None; EXE=None
+TRANSPORT='tcp'
 N=8192; SIZE=16384
 ENV=os.environ.copy(); ENV.update(STNOUPGRADE='1', STNORESTART='1', STNOBROWSER='1', STNOTRAY='1')
 results=[]
@@ -17,13 +18,18 @@ def settext(e,k,v):
     x=e.find(k)
     if x is None: x=ET.SubElement(e,k)
     x.text=str(v)
+def addresses(parent, tag, port):
+    schemes = ('tcp', 'quic') if TRANSPORT == 'both' else (TRANSPORT,)
+    for scheme in schemes:
+        ET.SubElement(parent, tag).text = f'{scheme}://127.0.0.1:{port}'
+
 def setup(home,src,ownport,gui,peerid,peerport):
     subprocess.run([str(EXE),'generate','--home',str(home),'--no-port-probing'],env=ENV,stdout=subprocess.DEVNULL,stderr=subprocess.STDOUT,check=True)
     tree=ET.parse(home/'config.xml'); c=tree.getroot(); own=c.find('device').get('id')
     for f in c.findall('folder'): c.remove(f)
     if peerid:
         d=ET.SubElement(c,'device',{'id':peerid,'name':'isolated-benchmark-peer','compression':'metadata'})
-        ET.SubElement(d,'address').text=f'tcp://127.0.0.1:{peerport}'
+        addresses(d, 'address', peerport)
     f=ET.SubElement(c,'folder',{'id':'benchmark','label':'Isolated benchmark','path':str(src),'type':'sendreceive','rescanIntervalS':'0','fsWatcherEnabled':'false','fsWatcherDelayS':'1'})
     ET.SubElement(f,'device',{'id':own})
     if peerid: ET.SubElement(f,'device',{'id':peerid})
@@ -31,18 +37,18 @@ def setup(home,src,ownport,gui,peerid,peerport):
     g=c.find('gui'); g.set('enabled','true'); g.set('tls','false'); settext(g,'address',f'127.0.0.1:{gui}'); key=g.findtext('apikey')
     o=c.find('options')
     for x in o.findall('listenAddress'): o.remove(x)
-    ET.SubElement(o,'listenAddress').text=f'tcp://127.0.0.1:{ownport}'
+    addresses(o, 'listenAddress', ownport)
     for k,v in [('globalAnnounceEnabled','false'),('localAnnounceEnabled','false'),('relaysEnabled','false'),('natEnabled','false'),('startBrowser','false'),('autoUpgradeIntervalH','0'),('urAccepted','-1')]: settext(o,k,v)
     tree.write(home/'config.xml',encoding='utf-8',xml_declaration=True)
     return own,key
 
 def addpeer(home,peerid,peerport):
     t=ET.parse(home/'config.xml'); c=t.getroot()
-    d=ET.SubElement(c,'device',{'id':peerid,'name':'isolated-benchmark-peer','compression':'metadata'}); ET.SubElement(d,'address').text=f'tcp://127.0.0.1:{peerport}'
+    d=ET.SubElement(c,'device',{'id':peerid,'name':'isolated-benchmark-peer','compression':'metadata'}); addresses(d, 'address', peerport)
     ET.SubElement(c.find('folder'),'device',{'id':peerid}); t.write(home/'config.xml',encoding='utf-8',xml_declaration=True)
 
 def transfer(src,dst,run,expected_files,expected_bytes):
-    global last_bundle_requests
+    global last_bundle_requests, last_transport
     homea=run/'sender'; homeb=run/'receiver'; ports=[port() for _ in range(4)]
     ida,ka=setup(homea,src,ports[0],ports[2],None,None)
     idb,kb=setup(homeb,dst,ports[1],ports[3],ida,ports[0]); addpeer(homea,idb,ports[1])
@@ -60,7 +66,10 @@ def transfer(src,dst,run,expected_files,expected_bytes):
                     # Completion is observed after receiver database commit.
                     stats=api(ports[3],kb,'system/connections')
                     last_bundle_requests=sum(c.get('batchRequestsSent',0) for c in stats['connections'].values())
-                    emit({'bundle_requests':last_bundle_requests})
+                    connected = [c['type'] for c in stats['connections'].values() if c.get('connected')]
+                    if len(connected) != 1: raise RuntimeError(f'Expected one connected peer, got {connected}')
+                    last_transport = connected[0]
+                    emit({'bundle_requests':last_bundle_requests,'transport':last_transport})
                     return time.perf_counter()-start
                 if time.perf_counter()-last>20:
                     emit({'progress':run.name,'elapsed_s':round(time.perf_counter()-start,1),'local_files':s['localFiles'],'need_files':s['needFiles']}); last=time.perf_counter()
@@ -95,15 +104,17 @@ def verify(dst,manifest):
 
 
 def main():
-    global ROOT, EXE, N, setup, mode, args
+    global ROOT, EXE, N, setup, mode, args, TRANSPORT
     import argparse
     parser=argparse.ArgumentParser(description='Compare durable ordinary sync and explicit whole-file bundles over loopback.')
     parser.add_argument('--binary',required=True,type=Path)
     parser.add_argument('--baseline-binary',type=Path,help='Compare an older bundle build with --binary, enabling bundles in both.')
+    parser.add_argument('--transport',choices=['tcp','quic','both'],default='tcp',help='Local benchmark listeners and peer addresses; both tests the configured preference.')
     parser.add_argument('--work',required=True,type=Path)
     parser.add_argument('--files',type=int,default=8192)
     parser.add_argument('--trials',type=int,default=3)
     args=parser.parse_args()
+    TRANSPORT=args.transport
     if args.files < 1 or args.trials < 1: parser.error('--files and --trials must be positive')
     ROOT=args.work.resolve(); EXE=args.binary.resolve(); N=args.files
     if ROOT.exists(): raise SystemExit('--work must be a new directory')
@@ -132,7 +143,7 @@ def main():
             run=ROOT/f"{trial}-{label}"
             run.mkdir(); dst=run/'received'; dst.mkdir()
             elapsed=transfer(fixture,dst,run,N,N*SIZE); verify(dst,manifest)
-            row=dict(trial=trial,mode=label,seconds=elapsed,verified=N,bundle_requests=last_bundle_requests)
+            row=dict(trial=trial,mode=label,seconds=elapsed,verified=N,bundle_requests=last_bundle_requests,transport=last_transport)
             rows.append(row); (ROOT/'results.json').write_text(json.dumps(rows,indent=2)); emit(row)
     emit({mode:statistics.median(r['seconds'] for r in rows if r['mode']==mode) for mode in labels})
 
