@@ -53,13 +53,14 @@ python script/benchmark_scans.py --binary /path/to/candidate \
   --files 16384 --trials 2
 ```
 
-An initial 16,384-file Windows comparison against v2.1.7-ecoded.10 measured:
+The final executable's 16,384-file Windows comparison against
+v2.1.7-ecoded.10 measured:
 
 | Complete operation | Released | Candidate | Time reduction |
 | --- | ---: | ---: | ---: |
-| Initial scan and indexing | 25.94 s | 21.57 s | 17% |
-| Unchanged full scan (median of three) | 6.26 s | 5.53 s | 12% |
-| Modified/deleted-file scan | 6.89 s | 5.66 s | 18% |
+| Initial scan and indexing | 26.13 s | 21.56 s | 17% |
+| Unchanged full scan (median of three) | 6.14 s | 5.39 s | 12% |
+| Modified/deleted-file scan | 6.51 s | 5.35 s | 18% |
 
 These are warm local synthetic fixtures, not measurements of the live 509,000-file
 folder. Filesystem enumeration/stat calls and the model's deletion pass remain
