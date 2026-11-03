@@ -16,8 +16,9 @@ jobs:
           - os: windows-latest
             platform: windows-amd64
             binary: syncthing.exe
-          # This canary publishes Windows only. Restore Mac assets after the
-          # Apple Silicon validation runner becomes available and passes.
+          - os: macos-14
+            platform: macos-arm64
+            binary: syncthing
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -81,7 +82,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "$GITHUB_REF_NAME" release/* --prerelease --title "$GITHUB_REF_NAME" --notes 'Windows canary: adds bounded parallel bundle reads and checksum verification, adaptive receiver admission from 16 to 32 files, QUIC preference with TCP fallback, and transfer pipeline throughput statistics. Normal authorization, request-memory limits, hash verification, conflicts and durable finalization remain enforced. Existing bundle opt-in settings are preserved. Mac packages are deferred pending Apple Silicon runner validation; Mac clients retain the previous matching release. See PARALLEL_BUNDLES.md, TRANSFER_STATS.md and RELEASE-READINESS.md.'
+          gh release create "$GITHUB_REF_NAME" release/* --prerelease --title "$GITHUB_REF_NAME" --notes 'Signed updater packages for Windows amd64 and macOS Apple Silicon: bounded parallel bundle reads and checksum verification, adaptive receiver admission from 16 to 32 files, QUIC preference with TCP fallback, and transfer pipeline throughput statistics. Normal authorization, request-memory limits, hash verification, conflicts and durable finalization remain enforced. Existing bundle opt-in settings are preserved. macOS binaries are not Apple Developer ID signed or notarized. See PARALLEL_BUNDLES.md, TRANSFER_STATS.md and RELEASE-READINESS.md.'
   update-feed:
     needs: publish
     permissions:

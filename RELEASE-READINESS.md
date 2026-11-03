@@ -10,13 +10,15 @@ by default, with the existing per-folder checkbox as the rollout control.
 
 ### v2.1.7-ecoded.10 platform scope
 
-This canary publishes Windows amd64 only. Windows, Linux and Intel Mac checks
-passed for the application changes. Apple Silicon runners remained queued on
-both macOS 15 and macOS 26, so Mac packages are deferred rather than published
-without validation. The signing workflow repeats the full Windows core and
-interrupted-transfer recovery checks before publication. Existing Mac clients
-skip releases without a matching asset and retain their previous release.
-Restore Mac release targets only after their platform checks pass. The general
+This canary initially published Windows amd64 while Apple Silicon runners
+remained queued on macOS 15 and 26. The macOS 14 pool subsequently ran natively
+on ARM64 and passed the full core and bundle race suites for the exact `.10`
+tag. The completion workflow adds its signed Mac ARM archive to the existing
+release, preserves existing assets, rebuilds their checksum manifest and
+refreshes the updater feed. Normal releases now include Windows and Mac ARM,
+using macOS 14 for ARM validation and signing. The Intel Mac package remains
+deferred; its clients skip releases without a matching asset. Windows, Linux
+and Intel Mac checks passed for the application changes. The general
 all-platform gates below apply when publishing the full platform set.
 
 - Build and run the fork's full core suites on Windows, Linux, macOS arm64 and
