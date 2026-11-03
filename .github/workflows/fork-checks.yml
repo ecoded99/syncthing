@@ -21,7 +21,7 @@ jobs:
           cache: true
       - run: go run build.go assets
       - run: go build ./cmd/syncthing
-      - run: go test ./cmd/dev/forkrelease ./cmd/syncthing ./internal/db/sqlite ./lib/cloudbackup ./lib/config ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/osutil ./lib/fs ./lib/explorerstatus
+      - run: go test ./cmd/dev/forkrelease ./cmd/syncthing ./internal/db/sqlite ./lib/cloudbackup ./lib/config ./lib/scanner ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/osutil ./lib/fs ./lib/explorerstatus
       - if: runner.os == 'Windows'
         uses: actions/setup-python@v5
         with:
@@ -38,7 +38,7 @@ jobs:
             ${{ runner.temp }}/bundle-recovery/**/console.log
           if-no-files-found: ignore
       - if: runner.os != 'Windows'
-        run: go test -race ./lib/cloudbackup ./lib/protocol
+        run: go test -race ./lib/cloudbackup ./lib/scanner ./lib/protocol
       - if: runner.os != 'Windows'
         run: go test -race ./lib/model -run 'Test.*Bundle' -count=1
       - if: runner.os == 'Linux'

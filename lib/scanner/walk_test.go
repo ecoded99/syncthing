@@ -675,7 +675,7 @@ func TestStopWalk(t *testing.T) {
 	defer cfgCancel()
 	cfg.Filesystem = fs
 	cfg.Hashers = numHashers
-	cfg.ProgressTickIntervalS = -1 // Don't attempt to build the full list of files before starting to scan...
+	cfg.ProgressTickIntervalS = -1 // Exercise the path without progress events.
 	fchan := Walk(ctx, cfg)
 
 	// Receive a few entries to make sure the walker is up and running,

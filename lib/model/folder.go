@@ -1496,3 +1496,7 @@ func (cf cFiler) CurrentFile(file string) (protocol.FileInfo, bool) {
 	}
 	return fi, true
 }
+
+func (cf cFiler) CurrentFiles(names []string) (map[string]protocol.FileInfo, error) {
+	return cf.db.GetDeviceFilesForScan(cf.folder, protocol.LocalDeviceID, names)
+}

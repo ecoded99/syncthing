@@ -1166,7 +1166,7 @@ angular.module('syncthing.core')
         };
 
         $scope.scanPercentage = function (folder) {
-            if (!$scope.scanProgress[folder]) {
+            if (!$scope.scanProgress[folder] || $scope.scanProgress[folder].discoveryComplete === false) {
                 return undefined;
             }
             return progressIntegerPercentage($scope.scanProgress[folder].current, $scope.scanProgress[folder].total);
@@ -1203,7 +1203,7 @@ angular.module('syncthing.core')
             // details, i.e.:
             // > 1 month
 
-            if (!$scope.scanProgress[folder]) {
+            if (!$scope.scanProgress[folder] || $scope.scanProgress[folder].discoveryComplete === false) {
                 return "";
             }
             // Calculate remaining bytes and seconds based on our current

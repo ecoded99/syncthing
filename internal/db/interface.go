@@ -54,6 +54,8 @@ type DB interface {
 
 	// Single files
 	GetDeviceFile(folder string, device protocol.DeviceID, file string) (protocol.FileInfo, bool, error)
+	// Up to 256 names; scan metadata includes hashes and block size, but no block lists.
+	GetDeviceFilesForScan(folder string, device protocol.DeviceID, names []string) (map[string]protocol.FileInfo, error)
 	GetGlobalAvailability(folder, file string) ([]protocol.DeviceID, error)
 	GetGlobalFile(folder string, file string) (protocol.FileInfo, bool, error)
 

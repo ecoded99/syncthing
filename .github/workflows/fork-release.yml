@@ -33,7 +33,9 @@ jobs:
         run: |
           if ($env:GITHUB_REF_NAME -notmatch '^v\d+\.\d+\.\d+-ecoded\.\d+$') { throw 'Invalid fork version' }
       - run: go run build.go assets
-      - run: go test ./cmd/dev/forkrelease ./cmd/syncthing ./internal/db/sqlite ./lib/cloudbackup ./lib/config ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/osutil ./lib/fs ./lib/explorerstatus
+      - run: go test ./cmd/dev/forkrelease ./cmd/syncthing ./internal/db/sqlite ./lib/cloudbackup ./lib/config ./lib/scanner ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/osutil ./lib/fs ./lib/explorerstatus
+      - if: runner.os != 'Windows'
+        run: go test -race ./lib/scanner
       - if: runner.os != 'Windows'
         run: go test -race ./lib/protocol ./lib/model -run 'Test.*Bundle|TestBatch' -count=1
       - name: Build ${{ matrix.platform }}

@@ -228,3 +228,8 @@ func (m metricsDB) PrefixKV(prefix string) (iter.Seq[KeyValue], func() error) {
 	defer m.account("-", "PrefixKV")()
 	return m.DB.PrefixKV(prefix)
 }
+
+func (m metricsDB) GetDeviceFilesForScan(folder string, device protocol.DeviceID, names []string) (map[string]protocol.FileInfo, error) {
+	defer m.account(folder, "GetDeviceFilesForScan")()
+	return m.DB.GetDeviceFilesForScan(folder, device, names)
+}

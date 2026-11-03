@@ -451,3 +451,14 @@ func (s *DB) forEachFolder(fn func(fdb *folderDB) error) error {
 	}
 	return firstError
 }
+
+func (s *DB) GetDeviceFilesForScan(folder string, device protocol.DeviceID, names []string) (map[string]protocol.FileInfo, error) {
+	fdb, err := s.getFolderDB(folder, false)
+	if errors.Is(err, errNoSuchFolder) {
+		return map[string]protocol.FileInfo{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return fdb.GetDeviceFilesForScan(device, names)
+}
