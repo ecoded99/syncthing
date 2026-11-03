@@ -13,11 +13,11 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
-	metrics "github.com/rcrowley/go-metrics"
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/syncthing/syncthing/internal/slogutil"
@@ -101,7 +101,7 @@ func newWalker(cfg Config) *walker {
 		cfg.EventLogger = events.NoopLogger
 	}
 	cfg.Hashers = max(1, cfg.Hashers)
-	w := &walker{Config: cfg}
+	w := &walker{Config: cfg, entriesVisited: new(atomic.Int64), filesToHash: new(atomic.Int64)}
 
 	if w.CurrentFiler == nil {
 		w.CurrentFiler = noCurrentFiler{}
@@ -125,7 +125,9 @@ var (
 
 type walker struct {
 	Config
-	regularQueue chan<- scanMetadataItem
+	regularQueue   chan<- scanMetadataItem
+	entriesVisited *atomic.Int64
+	filesToHash    *atomic.Int64
 }
 
 // Walk returns the list of files found in the local folder by scanning the
@@ -158,11 +160,13 @@ func (w *walker) walk(ctx context.Context) chan ScanResult {
 	progress := newByteCounter()
 	var total atomic.Int64
 	var discoveryComplete atomic.Bool
+	progressStopped := make(chan struct{})
 	newParallelHasher(ctx, w.Folder, w.Filesystem, w.Hashers, finishedChan, realToHashChan, progress, done)
 	go func() {
 		defer close(realToHashChan)
 		for file := range toHashChan {
 			total.Add(file.Size)
+			w.filesToHash.Add(1)
 			select {
 			case realToHashChan <- file:
 			case <-ctx.Done():
@@ -174,6 +178,7 @@ func (w *walker) walk(ctx context.Context) chan ScanResult {
 		discoveryComplete.Store(true)
 	}()
 	go func() {
+		defer close(progressStopped)
 		defer progress.Close()
 		emitProgress := func() {
 			current := progress.Total()
@@ -181,6 +186,7 @@ func (w *walker) walk(ctx context.Context) chan ScanResult {
 				"folder": w.Folder, "current": current,
 				"total": max(int64(1), total.Load(), current), "rate": progress.Rate(),
 				"discoveryComplete": discoveryComplete.Load(),
+				"entriesVisited":    w.entriesVisited.Load(), "filesToHash": w.filesToHash.Load(),
 			})
 		}
 		ticker := time.NewTicker(time.Duration(w.ProgressTickIntervalS) * time.Second)
@@ -198,7 +204,20 @@ func (w *walker) walk(ctx context.Context) chan ScanResult {
 		}
 	}()
 
-	return finishedChan
+	// Finish the final progress event before the caller advances to indexing
+	// and deletion checks. Cancellation still drains every producer.
+	output := make(chan ScanResult)
+	go func() {
+		for result := range finishedChan {
+			select {
+			case output <- result:
+			case <-ctx.Done():
+			}
+		}
+		<-progressStopped
+		close(output)
+	}()
+	return output
 }
 
 func (w *walker) walkWithoutHashing(ctx context.Context) chan ScanResult {
@@ -280,6 +299,9 @@ func (w *walker) walkAndHashFiles(ctx context.Context, toHashChan chan<- protoco
 		}
 
 		metricScannedItems.WithLabelValues(w.Folder).Inc()
+		if w.entriesVisited != nil {
+			w.entriesVisited.Add(1)
+		}
 
 		// Return value used when we are returning early and don't want to
 		// process the item. For directories, this means do-not-descend.
@@ -689,48 +711,40 @@ func (w *walker) String() string {
 }
 
 // A byteCounter gets bytes added to it via Update() and then provides the
-// Total() and one minute moving average Rate() in bytes per second.
+// Total() and the rate since the previous sample in bytes per second.
 type byteCounter struct {
-	metrics.EWMA
-
-	total atomic.Int64
-	stop  chan struct{}
+	total     atomic.Int64
+	mut       sync.Mutex
+	lastTime  time.Time
+	lastTotal int64
 }
 
 func newByteCounter() *byteCounter {
-	c := &byteCounter{
-		EWMA: metrics.NewEWMA1(), // a one minute exponentially weighted moving average
-		stop: make(chan struct{}),
-	}
-	go c.ticker()
-	return c
+	return &byteCounter{lastTime: time.Now()}
 }
 
-func (c *byteCounter) ticker() {
-	// The metrics.EWMA expects clock ticks every five seconds in order to
-	// decay the average properly.
-	t := time.NewTicker(5 * time.Second)
-	for {
-		select {
-		case <-t.C:
-			c.Tick()
-		case <-c.stop:
-			t.Stop()
-			return
-		}
+func (c *byteCounter) Rate() float64 { return c.rateAt(time.Now()) }
+
+func (c *byteCounter) rateAt(now time.Time) float64 {
+	c.mut.Lock()
+	defer c.mut.Unlock()
+	elapsed := now.Sub(c.lastTime).Seconds()
+	if elapsed <= 0 {
+		return 0
 	}
+	total := c.total.Load()
+	rate := float64(total-c.lastTotal) / elapsed
+	c.lastTime, c.lastTotal = now, total
+	return rate
 }
 
 func (c *byteCounter) Update(bytes int64) {
 	c.total.Add(bytes)
-	c.EWMA.Update(bytes)
 }
 
 func (c *byteCounter) Total() int64 { return c.total.Load() }
 
-func (c *byteCounter) Close() {
-	close(c.stop)
-}
+func (c *byteCounter) Close() {}
 
 // A no-op CurrentFiler
 

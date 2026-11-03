@@ -8,6 +8,7 @@ angular.module('syncthing.core')
         // private/helper definitions
 
         var prevDate = 0;
+        var connectionStatsRequest;
         var navigatingAway = false;
         var online = false;
         var restarting = false;
@@ -32,6 +33,7 @@ angular.module('syncthing.core')
             }
 
             setInterval($scope.refresh, 10000);
+            setInterval(refreshConnectionStats, 1000);
             Events.start();
         }
 
@@ -515,11 +517,7 @@ angular.module('syncthing.core')
 
         $scope.$on(Events.FOLDER_SCAN_PROGRESS, function (event, arg) {
             var data = arg.data;
-            $scope.scanProgress[data.folder] = {
-                current: data.current,
-                total: data.total,
-                rate: data.rate
-            };
+            $scope.scanProgress[data.folder] = angular.extend({}, $scope.scanProgress[data.folder], data);
             console.log("FolderScanProgress", data);
         });
 
@@ -803,30 +801,38 @@ angular.module('syncthing.core')
             });
         }
 
+        function counterRate(current, previous, seconds) {
+            return seconds > 0 && typeof current === 'number' && typeof previous === 'number' &&
+                isFinite(current) && isFinite(previous) && current >= previous ? (current - previous) / seconds : 0;
+        }
+
         function refreshConnectionStats() {
-            return $http.get(urlbase + '/system/connections').success(function (data) {
-                var now = Date.now(),
-                    td = (now - prevDate) / 1000,
+            if (connectionStatsRequest) {
+                return connectionStatsRequest;
+            }
+            connectionStatsRequest = $http.get(urlbase + '/system/connections').success(function (data) {
+                var now = performance.now(),
+                    td = prevDate > 0 ? (now - prevDate) / 1000 : 0,
                     id;
 
                 prevDate = now;
 
                 try {
-                    data.total.inbps = Math.max(0, (data.total.inBytesTotal - $scope.connectionsTotal.inBytesTotal) / td);
-                    data.total.outbps = Math.max(0, (data.total.outBytesTotal - $scope.connectionsTotal.outBytesTotal) / td);
+                    data.total.inbps = counterRate(data.total.inBytesTotal, $scope.connectionsTotal.inBytesTotal, td);
+                    data.total.outbps = counterRate(data.total.outBytesTotal, $scope.connectionsTotal.outBytesTotal, td);
                 } catch (e) {
                     data.total.inbps = 0;
                     data.total.outbps = 0;
                 }
                 var previousProcessing = $scope.processingStats;
                 var processing = data.processing || {};
-                ['prepared', 'decoded', 'applied'].forEach(function (stage) {
+                ['prepared', 'decoded', 'written', 'applied'].forEach(function (stage) {
                     var key = stage + 'BytesTotal';
                     var previous = previousProcessing && previousProcessing[key];
-                    processing[stage + 'Bps'] = td > 0 && typeof previous === 'number' &&
-                        typeof processing[key] === 'number' && processing[key] >= previous ?
-                        (processing[key] - previous) / td : 0;
+                    processing[stage + 'Bps'] = counterRate(processing[key], previous, td);
                 });
+                processing.appliedFilesPerSecond = counterRate(processing.appliedFilesTotal,
+                    previousProcessing && previousProcessing.appliedFilesTotal, td);
                 $scope.processingStats = processing;
                 $scope.connectionsTotal = data.total;
 
@@ -836,8 +842,9 @@ angular.module('syncthing.core')
                         continue;
                     }
                     try {
-                        data[id].inbps = Math.max(0, (data[id].inBytesTotal - $scope.connections[id].inBytesTotal) / td);
-                        data[id].outbps = Math.max(0, (data[id].outBytesTotal - $scope.connections[id].outBytesTotal) / td);
+                        var sameConnection = data[id].startedAt === $scope.connections[id].startedAt;
+                        data[id].inbps = sameConnection ? counterRate(data[id].inBytesTotal, $scope.connections[id].inBytesTotal, td) : 0;
+                        data[id].outbps = sameConnection ? counterRate(data[id].outBytesTotal, $scope.connections[id].outBytesTotal, td) : 0;
                     } catch (e) {
                         data[id].inbps = 0;
                         data[id].outbps = 0;
@@ -846,6 +853,8 @@ angular.module('syncthing.core')
                 $scope.connections = data;
                 console.log("refreshConnections", data);
             }).error($scope.emitHTTPError);
+            connectionStatsRequest.finally(function () { connectionStatsRequest = null; });
+            return connectionStatsRequest;
         }
 
         function refreshErrors() {
@@ -1079,7 +1088,6 @@ angular.module('syncthing.core')
         $scope.refresh = function () {
             refreshSystem();
             refreshDiscoveryCache();
-            refreshConnectionStats();
             refreshErrors();
         };
 
@@ -1166,7 +1174,8 @@ angular.module('syncthing.core')
         };
 
         $scope.scanPercentage = function (folder) {
-            if (!$scope.scanProgress[folder] || $scope.scanProgress[folder].discoveryComplete === false) {
+            if (!$scope.scanProgress[folder] || $scope.scanProgress[folder].discoveryComplete === false ||
+                ['indexing', 'deletions'].indexOf($scope.scanProgress[folder].phase) !== -1) {
                 return undefined;
             }
             return progressIntegerPercentage($scope.scanProgress[folder].current, $scope.scanProgress[folder].total);
@@ -1203,7 +1212,7 @@ angular.module('syncthing.core')
             // details, i.e.:
             // > 1 month
 
-            if (!$scope.scanProgress[folder] || $scope.scanProgress[folder].discoveryComplete === false) {
+            if ($scope.scanPercentage(folder) === undefined || !($scope.scanProgress[folder].rate > 0)) {
                 return "";
             }
             // Calculate remaining bytes and seconds based on our current
@@ -1379,7 +1388,14 @@ angular.module('syncthing.core')
                 case 'scan-waiting':
                     return $translate.instant('Waiting to Scan');
                 case 'scanning':
-                    return $translate.instant('Scanning');
+                    var phase = $scope.scanProgress[folder.id] && $scope.scanProgress[folder.id].phase;
+                    switch (phase) {
+                        case 'discovering': return $translate.instant('Checking Local Files');
+                        case 'hashing': return $translate.instant('Hashing Changed Files');
+                        case 'deletions': return $translate.instant('Checking Deletions');
+                        case 'indexing': return $translate.instant('Updating Local Index');
+                        default: return $translate.instant('Scanning');
+                    }
                 case 'stopped':
                     return $translate.instant('Stopped');
                 case 'sync-preparing':

@@ -8,14 +8,19 @@ package transferstats
 
 import "sync/atomic"
 
-var Prepared, Decoded, Applied atomic.Int64
+var Prepared, Decoded, Written, Applied, AppliedFiles atomic.Int64
 
 type Snapshot struct {
 	PreparedBytes int64 `json:"preparedBytesTotal"`
 	DecodedBytes  int64 `json:"decodedBytesTotal"`
 	AppliedBytes  int64 `json:"appliedBytesTotal"`
+	WrittenBytes  int64 `json:"writtenBytesTotal"`
+	AppliedFiles  int64 `json:"appliedFilesTotal"`
 }
 
 func Current() Snapshot {
-	return Snapshot{Prepared.Load(), Decoded.Load(), Applied.Load()}
+	return Snapshot{
+		PreparedBytes: Prepared.Load(), DecodedBytes: Decoded.Load(),
+		AppliedBytes: Applied.Load(), WrittenBytes: Written.Load(), AppliedFiles: AppliedFiles.Load(),
+	}
 }

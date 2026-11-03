@@ -20,6 +20,7 @@ jobs:
           go-version: '1.27.3'
           cache: true
       - run: go run build.go assets
+      - run: node script/test_gui_stats.cjs
       - run: go build ./cmd/syncthing
       - run: go test ./cmd/dev/forkrelease ./cmd/syncthing ./internal/db/sqlite ./lib/cloudbackup ./lib/config ./lib/scanner ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/osutil ./lib/fs ./lib/explorerstatus
       - if: runner.os == 'Windows'

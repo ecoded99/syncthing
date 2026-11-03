@@ -27,6 +27,42 @@ Once true, the existing percentage and ETA apply. The GUI also accepts older
 backends that omit the field. No database migration or transfer protocol changes
 are involved.
 
+## Scan visibility and throughput
+
+The folder status distinguishes checking local files, hashing changed files,
+checking deletions and updating the local index. Progress includes entries
+visited, changed files queued for hashing, bytes hashed and indexed entries
+checked for deletion. It reports whether the scan covers the entire folder or
+affected paths, and why it ran: startup, periodic check, filesystem watcher,
+watcher recovery, requested check or verification. Progress-disabled folders
+retain their disabled setting. Scan percentage and ETA describe hashing only;
+they are hidden during discovery, deletion checks and index updates.
+
+Watcher events already scan affected paths, potentially widening to an ancestor
+for previously unknown paths. Startup, periodic checks and watcher recovery
+can scan the whole folder's metadata. A metadata check does not imply rehashing
+unchanged file contents or downloading files. A scan may go directly to Up to
+Date when no transfer is required. In a disposable 512-file Windows check,
+editing one known file caused a watcher scan of one entry; an unchanged full
+scan visited 522 entries (including directories/internal entries), queued zero
+files for hashing and preserved the index sequence.
+
+Network and processing rates now refresh every second, using a monotonic clock
+and actual elapsed time, with no overlapping requests. Counter resets and
+connection replacements cannot become negative rates or lifetime-total spikes.
+Scan hashing reports the recent sample interval instead of a one-minute EWMA
+that remained zero until its first five-second tick.
+
+The processing counters distinguish small-file bundle prepare/decode (ordinary
+block transfers excluded), bytes accepted by file writes (including partial
+files and local copies), and logical bytes/files successfully finalized. File
+writes include filesystem caching and are not physical disk throughput.
+Finalization includes reused blocks and updates at file completion, so its
+rate can differ from network traffic. All totals are process-lifetime counters.
+The GUI labels these boundaries and adds finalized files per second, which is
+useful for small or empty files. `node script/test_gui_stats.cjs` checks polling,
+rate intervals, resets, event wiring, scan phases and older backend behavior.
+
 ## Validation and measurements
 
 Tests cover metadata equivalence with single-file lookups, omitted block lists,
