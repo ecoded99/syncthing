@@ -1,0 +1,86 @@
+name: Complete signed Apple Silicon release
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release to complete
+        required: true
+        default: v2.1.7-ecoded.10
+      runner:
+        description: Standard Apple Silicon runner
+        type: choice
+        options: [macos-14, macos-26, macos-15]
+        default: macos-14
+permissions:
+  contents: read
+concurrency:
+  group: mac-arm-release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+env:
+  BUILD_USER: ecoded
+  BUILD_HOST: github.com
+  RELEASE_TAG: ${{ inputs.release_tag }}
+jobs:
+  build:
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - name: Validate tag and native architecture
+        shell: bash
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-ecoded\.[0-9]+$ ]]
+          test "$(uname -m)" = arm64
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+          cache: true
+      - run: go run build.go assets
+      - run: go test ./cmd/dev/forkrelease ./cmd/syncthing ./internal/db/sqlite ./lib/cloudbackup ./lib/config ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/osutil ./lib/fs ./lib/explorerstatus
+      - run: go test -race ./lib/protocol ./lib/model -run 'Test.*Bundle|TestBatch' -count=1
+      - name: Build native release executable
+        shell: bash
+        run: |
+          test "$(go env GOARCH)" = arm64
+          go run build.go -version "$RELEASE_TAG" build
+          ./syncthing --version
+          file syncthing
+      - name: Sign and verify updater archive
+        env:
+          STFORK_SIGNING_KEY: ${{ secrets.STFORK_SIGNING_KEY }}
+        run: go run ./cmd/dev/forkrelease -binary syncthing -archive "syncthing-macos-arm64-$RELEASE_TAG.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-release-macos-arm64
+          path: syncthing-macos-arm64-*.zip
+          if-no-files-found: error
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: signed-release-macos-arm64
+          path: release
+      - name: Append package and refresh checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft == false' | grep -qx true
+          gh release download "$RELEASE_TAG" --pattern '*.zip' --pattern SHA256SUMS.txt --dir existing
+          (cd existing && sha256sum --check SHA256SUMS.txt)
+          gh release upload "$RELEASE_TAG" "release/syncthing-macos-arm64-$RELEASE_TAG.zip"
+          cp "release/syncthing-macos-arm64-$RELEASE_TAG.zip" existing/
+          (cd existing && sha256sum *.zip > SHA256SUMS.txt)
+          gh release upload "$RELEASE_TAG" existing/SHA256SUMS.txt --clobber
+  update-feed:
+    needs: publish
+    permissions:
+      contents: write
+    uses: ./.github/workflows/fork-update-feed.yml
