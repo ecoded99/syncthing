@@ -1,5 +1,6 @@
 name: Fork checks
 on:
+  workflow_dispatch:
   push:
     branches: [main, 'codex/**']
   pull_request:
