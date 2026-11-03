@@ -64,7 +64,8 @@ type downloadedBundle struct {
 
 // Download, staging and durable finalization run independently. Only one bundle
 // is downloaded, one queued and one staged at a time (at most 6 MiB of content).
-// Staging workers share the folder write limiter and never touch live paths.
+// Full file lifetimes use adaptive 16..32 admission. Staging also shares the
+// existing MaxConcurrentWrites limiter; that setting continues to cap writes.
 func (f *sendReceiveFolder) bundleRoutine(ctx context.Context, in <-chan fileBundle, copyChan chan<- copyBlocksState, out chan<- *sharedPullerState) {
 	downloaded := make(chan downloadedBundle, 1)
 	go func() {
@@ -75,18 +76,25 @@ func (f *sendReceiveFolder) bundleRoutine(ctx context.Context, in <-chan fileBun
 }
 
 func (f *sendReceiveFolder) stageDownloadedBundles(ctx context.Context, downloaded <-chan downloadedBundle, copyChan chan<- copyBlocksState, out chan<- *sharedPullerState) {
-	workers := make(chan struct{}, max(1, min(8, f.MaxConcurrentWrites)))
+	admission := newBundleAdmission(32)
+	monitorCtx, cancel := context.WithCancel(ctx)
+	var monitor sync.WaitGroup
+	monitor.Go(func() { admission.monitor(monitorCtx) })
+	defer func() { admission.wait(); cancel(); monitor.Wait() }()
 	for bundle := range downloaded {
 		var wg sync.WaitGroup
 		for i, file := range bundle.files {
-			workers <- struct{}{}
+			done, err := admission.take(ctx, file.Size)
+			if err != nil {
+				f.queue.Done(file.Name)
+				continue
+			}
 			wg.Go(func() {
-				defer func() { <-workers }()
 				var result protocol.BundleResult
 				if bundle.err == nil {
 					result = bundle.results[i]
 				}
-				f.stageBundleMember(ctx, file, result, bundle.err, copyChan, out)
+				f.stageBundleMember(ctx, file, result, bundle.err, copyChan, out, done)
 			})
 		}
 		wg.Wait()
@@ -105,12 +113,14 @@ func (f *sendReceiveFolder) downloadBundles(ctx context.Context, in <-chan fileB
 	}
 }
 
-func (f *sendReceiveFolder) stageBundleMember(ctx context.Context, file protocol.FileInfo, result protocol.BundleResult, bundleErr error, copyChan chan<- copyBlocksState, out chan<- *sharedPullerState) {
+func (f *sendReceiveFolder) stageBundleMember(ctx context.Context, file protocol.FileInfo, result protocol.BundleResult, bundleErr error, copyChan chan<- copyBlocksState, out chan<- *sharedPullerState, done func(bool)) {
 	if ctx.Err() != nil {
 		f.queue.Done(file.Name)
+		done(false)
 		return
 	}
 	if bundleErr != nil || result.Error != nil {
+		defer done(false)
 		// Includes stock/disconnected peers, corrupt frames and individual
 		// source errors. Normal requests can select another source.
 		if err := f.handleFile(ctx, file, copyChan); err != nil {
@@ -123,8 +133,10 @@ func (f *sendReceiveFolder) stageBundleMember(ctx context.Context, file protocol
 	if err != nil {
 		f.newPullError(file.Name, err)
 		f.queue.Done(file.Name)
+		done(false)
 		return
 	}
+	s.bundleDone = done
 	f.model.progressEmitter.Register(s)
 	out <- s
 }

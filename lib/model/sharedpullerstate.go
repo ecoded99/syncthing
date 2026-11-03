@@ -38,6 +38,7 @@ type sharedPullerState struct {
 	sparse        bool
 	created       time.Time
 	fsync         bool
+	bundleDone    func(bool) // Immutable before finisher handoff; releases lifecycle admission.
 
 	// Mutable, must be locked for access
 	err              error           // The first error we hit

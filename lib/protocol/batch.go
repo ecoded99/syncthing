@@ -10,11 +10,13 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 	"time"
 
 	"buf.build/go/protovalidate"
 	"github.com/syncthing/syncthing/internal/gen/bep"
+	"github.com/syncthing/syncthing/internal/transferstats"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 )
@@ -24,6 +26,7 @@ import (
 const (
 	batchCapabilityField protowire.Number = 3000
 	batchRequestField    protowire.Number = 3001
+	batchWorkers                          = 4
 	batchMaxCount                         = 32
 	batchMaxFile                          = 64 << 10
 	batchMaxData                          = batchMaxCount * batchMaxFile
@@ -264,30 +267,75 @@ func (c *rawConnection) serveBatch(outer *Request) (RequestResponse, error) {
 	if err != nil || outer.Name != batchName || outer.Offset != 0 || total != outer.Size || !bytes.Equal(hash[:], outer.Hash) {
 		return nil, fmt.Errorf("invalid batch: %w", ErrInvalid)
 	}
-	b := append([]byte("STR1"), byte(len(reqs)))
-	for _, r := range reqs {
-		// Ordinary authorization, encryption wrappers, and source consistency checks.
-		res, err := c.model.Request(r)
-		if _, ok := errors.AsType[protocolError](err); ok {
-			return nil, err
+	results := c.readBatchMembers(reqs, batchWorkers)
+	b := make([]byte, 5, 5+total+len(reqs)*4)
+	copy(b, "STR1")
+	b[4] = byte(len(reqs))
+	prepared := int64(0)
+	for _, res := range results {
+		if _, ok := errors.AsType[protocolError](res.err); ok {
+			return nil, res.err
 		}
-		b = append(b, byte(errorToCode(err)))
-		if err != nil {
-			b = binary.AppendUvarint(b, 0)
-			continue
-		}
-		data := res.Data()
-		if len(data) != r.Size {
-			res.Close()
+		// A malformed successful response invalidates the complete bundle.
+		if errors.Is(res.err, errBatchMemberSize) {
 			return nil, ErrInvalid
 		}
-		b = binary.AppendUvarint(b, uint64(len(data)))
-		b = append(b, data...)
-		// Release the normal request limiter before reading the next member.
-		res.Close()
+		b = append(b, byte(errorToCode(res.err)))
+		b = binary.AppendUvarint(b, uint64(len(res.val)))
+		b = append(b, res.val...)
+		prepared += int64(len(res.val))
 	}
+	transferstats.Prepared.Add(prepared)
 	transferred = true
 	return &batchResponse{data: b, done: make(chan struct{}), release: c.batchServeMut.Unlock}, nil
+}
+
+var errBatchMemberSize = errors.New("invalid batch member response size")
+
+// At most one batch is served per connection. Each worker owns at most one
+// normal response, and releases its limiter before starting another member.
+// Owned copies and the final frame are each bounded by batchMaxData.
+func (c *rawConnection) readBatchMembers(reqs []*Request, workers int) []asyncResult {
+	results := make([]asyncResult, len(reqs))
+	parallelBatchMembers(len(reqs), workers, func(i int) {
+		select {
+		case <-c.closed:
+			results[i].err = ErrClosed
+			return
+		default:
+		}
+		// Preserve ordinary authorization, encryption and source consistency checks.
+		res, err := c.model.Request(reqs[i])
+		if err != nil {
+			results[i].err = err
+			return
+		}
+		defer res.Close()
+		if len(res.Data()) != reqs[i].Size {
+			results[i].err = errBatchMemberSize
+			return
+		}
+		results[i].val = bytes.Clone(res.Data())
+	})
+	return results
+}
+
+// Work is bounded both by the stage's cap and available Go scheduler capacity.
+// Results must be stored by member index; completion order is unspecified.
+func parallelBatchMembers(count, workers int, work func(int)) {
+	workers = max(1, min(workers, count, runtime.GOMAXPROCS(0)))
+	var wg sync.WaitGroup
+	for worker := 1; worker < workers; worker++ {
+		wg.Go(func() {
+			for i := worker; i < count; i += workers {
+				work(i)
+			}
+		})
+	}
+	for i := 0; i < count; i += workers {
+		work(i)
+	}
+	wg.Wait()
 }
 
 func decodeBatchResults(b []byte, reqs []*Request) ([]asyncResult, error) {
@@ -318,6 +366,13 @@ func decodeBatchResults(b []byte, reqs []*Request) ([]asyncResult, error) {
 	if len(b) != 0 {
 		return nil, errors.New("trailing batch response")
 	}
+	decoded := int64(0)
+	for _, res := range results {
+		if res.err == nil {
+			decoded += int64(len(res.val))
+		}
+	}
+	transferstats.Decoded.Add(decoded)
 	return results, nil
 }
 

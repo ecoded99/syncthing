@@ -24,6 +24,7 @@ import (
 
 	"github.com/syncthing/syncthing/internal/itererr"
 	"github.com/syncthing/syncthing/internal/slogutil"
+	"github.com/syncthing/syncthing/internal/transferstats"
 	"github.com/syncthing/syncthing/lib/build"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/events"
@@ -290,7 +291,7 @@ func (f *sendReceiveFolder) pullerIteration(ctx context.Context, scanChan chan<-
 	if f.ExperimentalBatchedTransfers && f.Type != config.FolderTypeReceiveEncrypted {
 		// Bound concurrent durable file application without serially flushing
 		// a complete bundle or weakening per-file crash guarantees.
-		finishers = max(finishers, min(8, f.MaxConcurrentWrites))
+		finishers = max(finishers, 32)
 	}
 	for range finishers {
 		doneWg.Go(func() {
@@ -1802,6 +1803,7 @@ func (f *sendReceiveFolder) performFinish(file, curFile protocol.FileInfo, hasCu
 func (f *sendReceiveFolder) finisherRoutine(ctx context.Context, in <-chan *sharedPullerState, dbUpdateChan chan<- dbUpdateJob, scanChan chan<- string) {
 	for state := range in {
 		if closed, err := state.finalClose(); closed {
+
 			f.sl.DebugContext(ctx, "Closing temp file", slogutil.FilePath(state.file.Name))
 
 			f.queue.Done(state.file.Name)
@@ -1813,6 +1815,7 @@ func (f *sendReceiveFolder) finisherRoutine(ctx context.Context, in <-chan *shar
 			if err != nil {
 				f.newPullError(state.file.Name, fmt.Errorf("finishing: %w", err))
 			} else {
+				transferstats.Applied.Add(state.file.Size)
 				slog.InfoContext(ctx, "Synced file", f.LogAttr(), state.file.LogAttr(), slog.Group("blocks", slog.Int("local", state.reused+state.copyTotal), slog.Int("download", state.pullTotal)))
 
 				minBlocksPerBlock := state.file.BlockSize() / protocol.MinBlockSize
@@ -1838,6 +1841,9 @@ func (f *sendReceiveFolder) finisherRoutine(ctx context.Context, in <-chan *shar
 				"type":   "file",
 				"action": "update",
 			})
+			if state.bundleDone != nil {
+				state.bundleDone(err == nil)
+			}
 		}
 	}
 }

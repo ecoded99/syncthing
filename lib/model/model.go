@@ -33,6 +33,7 @@ import (
 	"github.com/syncthing/syncthing/internal/db"
 	"github.com/syncthing/syncthing/internal/itererr"
 	"github.com/syncthing/syncthing/internal/slogutil"
+	"github.com/syncthing/syncthing/internal/transferstats"
 	"github.com/syncthing/syncthing/lib/build"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/connections"
@@ -761,6 +762,7 @@ func (m *model) ConnectionStats() map[string]any {
 	}
 
 	res["connections"] = conns
+	res["processing"] = transferstats.Current()
 
 	in, out := protocol.TotalInOut()
 	res["total"] = map[string]any{

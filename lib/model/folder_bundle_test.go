@@ -110,18 +110,14 @@ func TestParallelBundleStaging(t *testing.T) {
 			close(in)
 			copies := make(chan copyBlocksState, protocol.BundleMaxFiles)
 			finished := make(chan *sharedPullerState, protocol.BundleMaxFiles)
-			f.stageDownloadedBundles(ctx, in, copies, finished)
-			if len(copies) != 0 {
-				t.Fatal("verified members went through ordinary copier")
-			}
+			staged := make(chan struct{})
+			go func() { defer close(staged); f.stageDownloadedBundles(ctx, in, copies, finished) }()
 			if canceled {
+				<-staged
 				if len(finished) != 0 {
 					t.Fatal("cancellation staged files")
 				}
 				return
-			}
-			if len(finished) != protocol.BundleMaxFiles {
-				t.Fatal("lost staged members", len(finished))
 			}
 			db := make(chan dbUpdateJob, protocol.BundleMaxFiles)
 			scans := make(chan string, protocol.BundleMaxFiles)
@@ -137,6 +133,7 @@ func TestParallelBundleStaging(t *testing.T) {
 					t.Fatal("durability bypassed")
 				}
 				must(t, f.performFinish(s.file, s.curFile, s.hasCurFile, s.tempName, db, scans))
+				s.bundleDone(true)
 				fd, err := f.mtimefs.Open(s.file.Name)
 				must(t, err)
 				data, err := io.ReadAll(fd)
@@ -145,6 +142,10 @@ func TestParallelBundleStaging(t *testing.T) {
 				if string(data) != "data" {
 					t.Fatal("corrupt parallel staging", string(data))
 				}
+			}
+			<-staged
+			if len(copies) != 0 {
+				t.Fatal("verified members went through ordinary copier")
 			}
 			if len(db) != protocol.BundleMaxFiles || len(scans) != 0 {
 				t.Fatal("incorrect apply/index updates")

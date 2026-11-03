@@ -171,7 +171,8 @@ func TestBatchTransport(t *testing.T) {
 			}
 			expectedCalls := int64(64)
 			if enabled {
-				expectedCalls += 33
+				// The failed bundle drains all concurrent reads before ordinary retry.
+				expectedCalls += 64
 			}
 			if m.calls.Load() != expectedCalls {
 				t.Fatal("not all members authorized", m.calls.Load())

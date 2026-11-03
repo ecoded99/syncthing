@@ -818,6 +818,16 @@ angular.module('syncthing.core')
                     data.total.inbps = 0;
                     data.total.outbps = 0;
                 }
+                var previousProcessing = $scope.processingStats;
+                var processing = data.processing || {};
+                ['prepared', 'decoded', 'applied'].forEach(function (stage) {
+                    var key = stage + 'BytesTotal';
+                    var previous = previousProcessing && previousProcessing[key];
+                    processing[stage + 'Bps'] = td > 0 && typeof previous === 'number' &&
+                        typeof processing[key] === 'number' && processing[key] >= previous ?
+                        (processing[key] - previous) / td : 0;
+                });
+                $scope.processingStats = processing;
                 $scope.connectionsTotal = data.total;
 
                 data = data.connections;
