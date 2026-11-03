@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/text/unicode/norm"
@@ -71,17 +72,41 @@ func RequestBundle(ctx context.Context, conn Connection, requests []Request) ([]
 		e.conn.peerBatch.Store(false)
 		return nil, err
 	}
+	workers := 1
+	if size >= 256<<10 {
+		workers = batchWorkers
+	}
+	if err := verifyBundleMembers(ctx, decoded, reqs, workers); err != nil {
+		if ctx.Err() == nil {
+			e.conn.peerBatch.Store(false)
+		}
+		return nil, err
+	}
 	results := make([]BundleResult, len(decoded))
 	for i, res := range decoded {
-		if res.err == nil {
-			h := sha256.Sum256(res.val)
-			if !bytes.Equal(h[:], reqs[i].Hash) {
-				e.conn.peerBatch.Store(false)
-				return nil, errors.New("bundle member hash mismatch")
-			}
-		}
 		results[i] = BundleResult{res.val, res.err}
 	}
 	e.conn.batchSent.Add(1)
 	return results, nil
+}
+
+// No member is exposed until all successful members have been verified.
+func verifyBundleMembers(ctx context.Context, decoded []asyncResult, reqs []*Request, workers int) error {
+	var mismatch atomic.Bool
+	parallelBatchMembers(len(decoded), workers, func(i int) {
+		if ctx.Err() != nil || mismatch.Load() || decoded[i].err != nil {
+			return
+		}
+		h := sha256.Sum256(decoded[i].val)
+		if !bytes.Equal(h[:], reqs[i].Hash) {
+			mismatch.Store(true)
+		}
+	})
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if mismatch.Load() {
+		return errors.New("bundle member hash mismatch")
+	}
+	return nil
 }

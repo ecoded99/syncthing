@@ -33,17 +33,23 @@ receiver decoding, and receiver applied bytes all matched 8 MiB. GUI rate
 calculations were checked for initial samples, counter deltas, resets, and zero
 elapsed intervals. This does not establish desktop-to-laptop throughput.
 
-## Further parallelism candidates
+## Bounded stage parallelism
 
-Source member reads in `serveBatch` and bundle content checksum verification are
-currently sequential within a bundle. Bounded concurrency may help if profiling
-shows those stages constrain throughput. Source reads must preserve authorization,
-source consistency, response ordering, and the request memory limiter; parallel
-reads that hold every response open can exhaust that limiter. Checksum work must
-still finish before accepting data.
+Bundle source reads now use up to four workers per connection, capped by
+GOMAXPROCS. Each response is copied and closed before that worker reads its next
+member, preserving the ordinary request-memory limiter. All reads drain before
+returning; member ordering and per-file errors are preserved. At most one batch
+is served per connection. Owned member copies and the final frame are each
+bounded to 2 MiB of payload, in addition to up to four normal response buffers
+subject to the existing limiter.
+
+Explicit bundle checksum verification uses up to four workers for bundles of
+at least 256 KiB. Smaller bundles retain sequential hashing to avoid scheduling
+overhead. No member is returned until verification succeeds for every successful
+member. Hash corruption still disables the extension; cancellation does not.
 
 Receiving, file writing, finalization, and index work already overlap. Index
 processing remains a significant part of the local small-file measurements;
-increasing network streams alone will not remove that cost. Measure the new stage
-rates on the real link before choosing the next optimization. Maintain ordering
-and version consistency when changing index batching.
+increasing concurrency alone will not remove that cost. Maintain ordering and
+version consistency when changing index batching. Additional network connections
+have not been enabled by this change.
