@@ -1816,6 +1816,7 @@ func (f *sendReceiveFolder) finisherRoutine(ctx context.Context, in <-chan *shar
 				f.newPullError(state.file.Name, fmt.Errorf("finishing: %w", err))
 			} else {
 				transferstats.Applied.Add(state.file.Size)
+				transferstats.AppliedFiles.Add(1)
 				slog.InfoContext(ctx, "Synced file", f.LogAttr(), state.file.LogAttr(), slog.Group("blocks", slog.Int("local", state.reused+state.copyTotal), slog.Int("download", state.pullTotal)))
 
 				minBlocksPerBlock := state.file.BlockSize() / protocol.MinBlockSize
@@ -2304,7 +2305,11 @@ func (f *sendReceiveFolder) inWritableDir(fn func(string) error, path string) er
 
 func (f *sendReceiveFolder) limitedWriteAt(ctx context.Context, fd io.WriterAt, data []byte, offset int64) error {
 	return f.withLimiter(ctx, func() error {
-		_, err := fd.WriteAt(data, offset)
+		n, err := fd.WriteAt(data, offset)
+		transferstats.Written.Add(int64(n))
+		if err == nil && n != len(data) {
+			err = io.ErrShortWrite
+		}
 		return err
 	})
 }

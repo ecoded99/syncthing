@@ -251,7 +251,7 @@ func (f *folder) Serve(ctx context.Context) error {
 
 		case fsEvents := <-f.watchChan:
 			f.sl.DebugContext(ctx, "Scan due to watcher")
-			err = f.scanSubdirs(ctx, fsEvents)
+			err = f.scanSubdirsReason(ctx, fsEvents, "watcher")
 
 		case <-f.restartWatchChan:
 			f.sl.DebugContext(ctx, "Restart watcher")
@@ -477,6 +477,10 @@ func (f *folder) pull(ctx context.Context) (success bool, err error) {
 }
 
 func (f *folder) scanSubdirs(ctx context.Context, subDirs []string) error {
+	return f.scanSubdirsReason(ctx, subDirs, "requested")
+}
+
+func (f *folder) scanSubdirsReason(ctx context.Context, subDirs []string, reason string) error {
 	f.sl.DebugContext(ctx, "Scanning")
 
 	oldHash := f.ignores.Hash()
@@ -535,6 +539,14 @@ func (f *folder) scanSubdirs(ctx context.Context, subDirs []string) error {
 	f.clearScanErrors(subDirs)
 
 	batch := f.newScanBatch()
+	progress := newScanProgressLogger(f.evLogger, f.ID, reason, len(subDirs))
+	defer progress.close()
+	if f.ScanProgressIntervalS < 0 {
+		progress.close()
+	} else {
+		batch.progress = progress
+	}
+	progress.setPhase("discovering", 0)
 
 	// Schedule a pull after scanning, but only if we actually detected any
 	// changes.
@@ -552,6 +564,7 @@ func (f *folder) scanSubdirs(ctx context.Context, subDirs []string) error {
 		return err
 	}
 
+	progress.setPhase("indexing", changes)
 	if err := batch.Flush(); err != nil {
 		return err
 	}
@@ -565,12 +578,14 @@ func (f *folder) scanSubdirs(ctx context.Context, subDirs []string) error {
 	// Do a scan of the database for each prefix, to check for deleted and
 	// ignored files.
 
+	progress.setPhase("deletions", changes)
 	changesHere, err = f.scanSubdirsDeletedAndIgnored(ctx, subDirs, batch)
 	changes += changesHere
 	if err != nil {
 		return err
 	}
 
+	progress.setPhase("indexing", changes)
 	if err := batch.Flush(); err != nil {
 		return err
 	}
@@ -583,6 +598,7 @@ const maxToRemove = 1000
 
 type scanBatch struct {
 	f                *folder
+	progress         *scanProgressLogger
 	updateBatch      *FileInfoBatch
 	toRemove         []string
 	skipInFindRename map[string]struct{}
@@ -699,6 +715,9 @@ func (f *folder) scanSubdirsChangedAndNew(ctx context.Context, subDirs []string,
 		ScanXattrs:            f.SendXattrs || f.SyncXattrs,
 		XattrFilter:           f.XattrFilter,
 	}
+	if batch.progress != nil {
+		scanConfig.EventLogger = batch.progress
+	}
 	var fchan chan scanner.ScanResult
 	if f.Type == config.FolderTypeReceiveEncrypted {
 		fchan = scanner.WalkWithoutHashing(scanCtx, scanConfig)
@@ -751,6 +770,10 @@ func (f *folder) scanSubdirsChangedAndNew(ctx context.Context, subDirs []string,
 }
 
 func (f *folder) scanSubdirsDeletedAndIgnored(ctx context.Context, subDirs []string, batch *scanBatch) (int, error) {
+	var checked int64
+	if batch.progress != nil {
+		defer func() { batch.progress.deletionProgress(checked, true) }()
+	}
 	var toIgnore []protocol.FileInfo
 	ignoredParent := ""
 	changes := 0
@@ -761,6 +784,10 @@ outer:
 		for fi, err := range itererr.Zip(f.db.AllLocalFilesWithPrefix(f.folderID, protocol.LocalDeviceID, sub)) {
 			if err != nil {
 				return changes, err
+			}
+			checked++
+			if batch.progress != nil && checked%256 == 0 {
+				batch.progress.deletionProgress(checked, false)
 			}
 
 			select {
@@ -1019,7 +1046,13 @@ loop:
 }
 
 func (f *folder) scanTimerFired(ctx context.Context) error {
-	err := f.scanSubdirs(ctx, nil)
+	reason := "initial"
+	select {
+	case <-f.initialScanFinished:
+		reason = "periodic"
+	default:
+	}
+	err := f.scanSubdirsReason(ctx, nil, reason)
 
 	select {
 	case <-f.initialScanFinished:
@@ -1088,7 +1121,7 @@ func (f *folder) scheduleWatchRestart() {
 func (f *folder) restartWatch(ctx context.Context) error {
 	f.stopWatch()
 	f.startWatch(ctx)
-	return f.scanSubdirs(ctx, nil)
+	return f.scanSubdirsReason(ctx, nil, "watcher-restart")
 }
 
 // startWatch should only ever be called synchronously. If you want to use
@@ -1446,7 +1479,7 @@ func (f *folder) handleForcedRescans(ctx context.Context) error {
 		return err
 	}
 
-	return f.scanSubdirs(ctx, paths)
+	return f.scanSubdirsReason(ctx, paths, "verification")
 }
 
 // The exists function is expected to return true for all known paths
@@ -1495,4 +1528,8 @@ func (cf cFiler) CurrentFile(file string) (protocol.FileInfo, bool) {
 		return protocol.FileInfo{}, false
 	}
 	return fi, true
+}
+
+func (cf cFiler) CurrentFiles(names []string) (map[string]protocol.FileInfo, error) {
+	return cf.db.GetDeviceFilesForScan(cf.folder, protocol.LocalDeviceID, names)
 }

@@ -7,13 +7,14 @@ The **This Device** table shows these rates and cumulative byte totals:
 | Network Receive | Existing inbound protocol traffic, including protocol overhead, across all connections. |
 | Bundle Prepare (Send) | Successful bundle payload bytes read and assembled by this device. |
 | Bundle Decode (Receive) | Payload bytes parsed from structurally valid incoming bundle responses, before content hash verification. |
-| File Processing (Receive) | Whole-file bytes successfully flushed and finalized, then handed to the sync index. Database commit can finish later. Includes ordinary transfers and bundles, and can include reused local blocks. |
+| File Writes (Receive) | Bytes accepted by file writes, including partial files and local block copies. Includes filesystem caching; not physical disk throughput. |
+| Files Finalized (Receive) | Whole-file bytes successfully flushed and finalized, then handed to the sync index, plus completed files/s and file count. Database commit can finish later. Includes ordinary transfers, bundles and reused local blocks. |
 
-These are aggregate throughput readings, measured over the GUI polling interval,
+These are aggregate throughput readings, refreshed every second over the actual GUI polling interval,
 across all folders. They are not isolated CPU processing benchmarks. Work overlaps,
 so do not add the rates or infer stage duration from them. Completed files cause
 the processing counter to advance in steps; short operations may appear as a
-single polling spike. Empty files have no byte throughput.
+single polling spike. Empty files have no byte throughput but contribute to files/s.
 
 The bundle format is an uncompressed framed stream. Preparation and decoding are
 the relevant equivalents of packing and unpacking; no ZIP compression,
@@ -22,9 +23,11 @@ transfers. File processing excludes metadata-only shortcuts and deletions.
 
 `GET /rest/system/connections` exposes the existing network totals plus a
 `processing` object containing `preparedBytesTotal`, `decodedBytesTotal`, and
-`appliedBytesTotal`. These payload counters reset when the process restarts.
-The GUI calculates counter deltas divided by elapsed wall-clock time, displays
+`appliedBytesTotal`, `writtenBytesTotal`, and `appliedFilesTotal`. These counters reset when the process restarts.
+The GUI calculates counter deltas divided by monotonic elapsed time, displays
 zero on the first sample or a reset, and hides the new rows with older backends.
+Polling requests cannot overlap. Scan hashing likewise uses a recent interval
+rate instead of the former one-minute EWMA and initial five-second delay.
 
 Validation: targeted protocol/model race tests passed. Two isolated local QUIC
 peers transferred and verified 512 files (8 MiB) in both ordinary and bundle

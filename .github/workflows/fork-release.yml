@@ -33,7 +33,10 @@ jobs:
         run: |
           if ($env:GITHUB_REF_NAME -notmatch '^v\d+\.\d+\.\d+-ecoded\.\d+$') { throw 'Invalid fork version' }
       - run: go run build.go assets
-      - run: go test ./cmd/dev/forkrelease ./cmd/syncthing ./internal/db/sqlite ./lib/cloudbackup ./lib/config ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/osutil ./lib/fs ./lib/explorerstatus
+      - run: node script/test_gui_stats.cjs
+      - run: go test ./cmd/dev/forkrelease ./cmd/syncthing ./internal/db/sqlite ./lib/cloudbackup ./lib/config ./lib/scanner ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/osutil ./lib/fs ./lib/explorerstatus
+      - if: runner.os != 'Windows'
+        run: go test -race ./lib/scanner
       - if: runner.os != 'Windows'
         run: go test -race ./lib/protocol ./lib/model -run 'Test.*Bundle|TestBatch' -count=1
       - name: Build ${{ matrix.platform }}
@@ -82,7 +85,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "$GITHUB_REF_NAME" release/* --prerelease --title "$GITHUB_REF_NAME" --notes 'Signed updater packages for Windows amd64 and macOS Apple Silicon: bounded parallel bundle reads and checksum verification, adaptive receiver admission from 16 to 32 files, QUIC preference with TCP fallback, and transfer pipeline throughput statistics. Normal authorization, request-memory limits, hash verification, conflicts and durable finalization remain enforced. Existing bundle opt-in settings are preserved. macOS binaries are not Apple Developer ID signed or notarized. See PARALLEL_BUNDLES.md, TRANSFER_STATS.md and RELEASE-READINESS.md.'
+          gh release create "$GITHUB_REF_NAME" release/* --prerelease --title "$GITHUB_REF_NAME" --notes 'Signed updater packages for Windows amd64 and macOS Apple Silicon. Faster scanning uses batched metadata, four bounded comparison workers and hashing during discovery. Scan status shows phases, scope, trigger and entry counts. Throughput refreshes every second, with separate file writes, finalized bytes and files/s. QUIC preference, TCP fallback, hash verification, conflicts and durable finalization remain enforced. Existing bundle opt-in settings are preserved. macOS binaries are updater-signed but not Apple Developer ID signed or notarized. See SCAN_PIPELINE.md, TRANSFER_STATS.md and RELEASE-READINESS.md.'
   update-feed:
     needs: publish
     permissions:

@@ -390,7 +390,7 @@
               <div class="panel panel-default" ng-repeat="folder in groupedFolders">
                 <button class="btn panel-heading" data-toggle="collapse" data-parent="#folders-{{$parent.$index}}" data-target="#folder-{{$parent.$index}}-{{$index}}" aria-expanded="false">
                   <div class="panel-progress" ng-show="folderStatus(folder) == 'syncing'" ng-attr-style="width: {{syncPercentage(folder.id) | percent}}"></div>
-                  <div class="panel-progress" ng-show="folderStatus(folder) == 'scanning' && scanProgress[folder.id] != undefined" ng-attr-style="width: {{scanPercentage(folder.id) | percent}}"></div>
+                  <div class="panel-progress" ng-show="folderStatus(folder) == 'scanning' && scanPercentage(folder.id) != undefined" ng-attr-style="width: {{scanPercentage(folder.id) | percent}}"></div>
                   <h4 class="panel-title">
                     <div class="panel-icon hidden-xs">
                       <span ng-if="folder.type == 'sendreceive'" class="fas fa-fw fa-folder"></span>
@@ -474,7 +474,30 @@
                             <a href="" ng-click="showNeed(folder.id)">{{model[folder.id].needTotalItems | alwaysNumber | localeNumber}} <span translate>items</span>, ~{{model[folder.id].needBytes | binary}}B</a>
                           </td>
                         </tr>
-                        <tr ng-if="folderStatus(folder) === 'scanning' && scanRate(folder.id) > 0">
+                        <tr ng-if="folderStatus(folder) === 'scanning' && scanProgress[folder.id].scope">
+                          <th><span translate>Scan Scope</span></th>
+                          <td class="text-right" title="Scanning checks the local index and filesystem. It only hashes changed files; transfer activity is shown separately.">
+                            <span ng-if="scanProgress[folder.id].scope === 'full'" translate>Entire folder</span>
+                            <span ng-if="scanProgress[folder.id].scope === 'paths'"><span translate>Affected paths</span>: {{scanProgress[folder.id].pathCount | localeNumber}}</span>
+                            <small class="text-muted" ng-switch="scanProgress[folder.id].reason">
+                              <span ng-switch-when="initial" translate>— startup check</span>
+                              <span ng-switch-when="periodic" translate>— periodic check</span>
+                              <span ng-switch-when="watcher" translate>— filesystem change</span>
+                              <span ng-switch-when="watcher-restart" translate>— watcher recovery</span>
+                              <span ng-switch-when="verification" translate>— verification</span>
+                              <span ng-switch-default translate>— requested check</span>
+                            </small>
+                          </td>
+                        </tr>
+                        <tr ng-if="folderStatus(folder) === 'scanning' && scanProgress[folder.id].entriesVisited !== undefined">
+                          <th><span translate>Local Scan Progress</span></th>
+                          <td class="text-right">
+                            <span ng-if="scanProgress[folder.id].phase !== 'deletions'">{{scanProgress[folder.id].entriesVisited | localeNumber}} <span translate>entries checked</span>, {{scanProgress[folder.id].filesToHash | localeNumber}} <span translate>changed files found</span></span>
+                            <span ng-if="scanProgress[folder.id].phase === 'deletions'">{{scanProgress[folder.id].deletionChecks | localeNumber}} <span translate>indexed entries checked</span></span>
+                            <small class="text-muted" ng-if="scanProgress[folder.id].current > 0"><br/>{{scanProgress[folder.id].current | binary}}B <span translate>hashed</span><span ng-if="scanProgress[folder.id].phase === 'discovering' || scanProgress[folder.id].phase === 'hashing'"> · {{scanRate(folder.id) | binary}}B/s</span></small>
+                          </td>
+                        </tr>
+                        <tr ng-if="folderStatus(folder) === 'scanning' && scanRemaining(folder.id)">
                           <th><span class="fas fa-fw fa-hourglass-half"></span>&nbsp;<span translate>Scan Time Remaining</span></th>
                           <td class="text-right">
                             <span tooltip data-original-title="{{scanRate(folder.id) | binary}}B/s">~ {{scanRemaining(folder.id)}}</span>
@@ -693,7 +716,7 @@
                   <tbody>
                     <tr>
                       <th><span class="fas fa-fw fa-cloud-download-alt"></span>&nbsp;<span translate>Network Receive</span></th>
-                      <td class="text-right">
+                      <td class="text-right" title="Recent interval average, refreshed every second. Network protocol bytes can be lower than logical file throughput due to compression and local block reuse.">
                         <a href="#" class="toggler" ng-click="toggleUnits()">
                           <span ng-if="!metricRates">{{connectionsTotal.inbps | binary}}B/s</span>
                           <span ng-if="metricRates">{{connectionsTotal.inbps*8 | metric}}bps</span>
@@ -731,7 +754,7 @@
                     </tr>
                     <tr ng-if="processingStats.appliedBytesTotal >= 0">
                       <th><span translate>Bundle Prepare (Send)</span></th>
-                      <td class="text-right" title="Source payload read and assembled into outgoing bundles. No ZIP packing or compression. All folders; rates use the latest polling interval.">
+                      <td class="text-right" title="Small-file bundle payload only; ordinary block transfers are excluded. No ZIP packing. Recent interval average, refreshed every second.">
                         <span ng-if="!metricRates">{{processingStats.preparedBps | binary}}B/s</span>
                         <span ng-if="metricRates">{{processingStats.preparedBps*8 | metric}}bps</span>
                         ({{processingStats.preparedBytesTotal | binary}}B)
@@ -739,18 +762,27 @@
                     </tr>
                     <tr ng-if="processingStats.appliedBytesTotal >= 0">
                       <th><span translate>Bundle Decode (Receive)</span></th>
-                      <td class="text-right" title="Payload parsed from incoming bundles. No archive extraction or decompression. All folders; rates use the latest polling interval.">
+                      <td class="text-right" title="Small-file bundle payload only; ordinary block transfers are excluded. No archive extraction. Recent interval average, refreshed every second.">
                         <span ng-if="!metricRates">{{processingStats.decodedBps | binary}}B/s</span>
                         <span ng-if="metricRates">{{processingStats.decodedBps*8 | metric}}bps</span>
                         ({{processingStats.decodedBytesTotal | binary}}B)
                       </td>
                     </tr>
+                    <tr ng-if="processingStats.writtenBytesTotal >= 0">
+                      <th><span translate>File Writes (Receive)</span></th>
+                      <td class="text-right" title="Bytes accepted by file writes, including partial files, downloaded blocks and locally copied blocks. Includes filesystem caching; this is not physical disk speed. Refreshed every second.">
+                        <span ng-if="!metricRates">{{processingStats.writtenBps | binary}}B/s</span>
+                        <span ng-if="metricRates">{{processingStats.writtenBps*8 | metric}}bps</span>
+                        ({{processingStats.writtenBytesTotal | binary}}B)
+                      </td>
+                    </tr>
                     <tr ng-if="processingStats.appliedBytesTotal >= 0">
-                      <th><span translate>File Processing (Receive)</span></th>
-                      <td class="text-right" title="Received file bytes successfully flushed, finalized and handed to the sync index. Index commit may finish later. All folders; rates use the latest polling interval.">
+                      <th><span translate>Files Finalized (Receive)</span></th>
+                      <td class="text-right" title="Logical bytes in successfully finalized files, including reused blocks. Updates when each file completes; index commit may finish later. Recent interval average, refreshed every second.">
                         <span ng-if="!metricRates">{{processingStats.appliedBps | binary}}B/s</span>
                         <span ng-if="metricRates">{{processingStats.appliedBps*8 | metric}}bps</span>
                         ({{processingStats.appliedBytesTotal | binary}}B)
+                        <small ng-if="processingStats.appliedFilesTotal >= 0"><br/>{{processingStats.appliedFilesPerSecond | number:1}} <span translate>files/s</span> · {{processingStats.appliedFilesTotal | localeNumber}} <span translate>files</span></small>
                       </td>
                     </tr>
                     <tr>

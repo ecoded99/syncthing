@@ -222,3 +222,47 @@ func shortHash(bs []byte) string {
 	}
 	return base64.RawStdEncoding.EncodeToString(bs)[:8]
 }
+
+// GetDeviceFilesForScan amortizes SQLite calls without loading unused block
+// lists. One fixed-size prepared statement bounds both parameters and cache use.
+func (s *folderDB) GetDeviceFilesForScan(device protocol.DeviceID, names []string) (map[string]protocol.FileInfo, error) {
+	const limit = 256
+	if len(names) > limit {
+		return nil, errors.New("scan metadata batch exceeds 256 names")
+	}
+	result := make(map[string]protocol.FileInfo, len(names))
+	if len(names) == 0 {
+		return result, nil
+	}
+	args := make([]any, limit+1)
+	args[0] = device.String()
+	for i, name := range names {
+		args[i+1] = osutil.NormalizedFilename(name)
+	}
+	rows, err := s.stmt(`
+ SELECT fi.fiprotobuf FROM file_names n
+ INNER JOIN files f ON f.name_idx = n.idx
+ INNER JOIN devices d ON f.device_idx = d.idx
+ INNER JOIN fileinfos fi ON fi.sequence = f.sequence
+ WHERE d.device_id = ? AND n.name IN (` + strings.TrimSuffix(strings.Repeat("?,", limit), ",") + `)
+ `).Queryx(args...)
+	if err != nil {
+		return nil, wrap(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ind indirectFI
+		if err := rows.StructScan(&ind); err != nil {
+			return nil, wrap(err)
+		}
+		fi, err := ind.FileInfo()
+		if err != nil {
+			return nil, wrap(err)
+		}
+		result[fi.Name] = fi
+	}
+	if err := rows.Err(); err != nil {
+		return nil, wrap(err)
+	}
+	return result, nil
+}
