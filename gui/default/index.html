@@ -692,7 +692,7 @@
                 <table class="table table-condensed table-striped table-auto">
                   <tbody>
                     <tr>
-                      <th><span class="fas fa-fw fa-cloud-download-alt"></span>&nbsp;<span translate>Download Rate</span></th>
+                      <th><span class="fas fa-fw fa-cloud-download-alt"></span>&nbsp;<span translate>Network Receive</span></th>
                       <td class="text-right">
                         <a href="#" class="toggler" ng-click="toggleUnits()">
                           <span ng-if="!metricRates">{{connectionsTotal.inbps | binary}}B/s</span>
@@ -727,6 +727,30 @@
                             </i>
                           </small>
                         </a>
+                      </td>
+                    </tr>
+                    <tr ng-if="processingStats.appliedBytesTotal >= 0">
+                      <th><span translate>Bundle Prepare (Send)</span></th>
+                      <td class="text-right" title="Source payload read and assembled into outgoing bundles. No ZIP packing or compression. All folders; rates use the latest polling interval.">
+                        <span ng-if="!metricRates">{{processingStats.preparedBps | binary}}B/s</span>
+                        <span ng-if="metricRates">{{processingStats.preparedBps*8 | metric}}bps</span>
+                        ({{processingStats.preparedBytesTotal | binary}}B)
+                      </td>
+                    </tr>
+                    <tr ng-if="processingStats.appliedBytesTotal >= 0">
+                      <th><span translate>Bundle Decode (Receive)</span></th>
+                      <td class="text-right" title="Payload parsed from incoming bundles. No archive extraction or decompression. All folders; rates use the latest polling interval.">
+                        <span ng-if="!metricRates">{{processingStats.decodedBps | binary}}B/s</span>
+                        <span ng-if="metricRates">{{processingStats.decodedBps*8 | metric}}bps</span>
+                        ({{processingStats.decodedBytesTotal | binary}}B)
+                      </td>
+                    </tr>
+                    <tr ng-if="processingStats.appliedBytesTotal >= 0">
+                      <th><span translate>File Processing (Receive)</span></th>
+                      <td class="text-right" title="Received file bytes successfully flushed, finalized and handed to the sync index. Index commit may finish later. All folders; rates use the latest polling interval.">
+                        <span ng-if="!metricRates">{{processingStats.appliedBps | binary}}B/s</span>
+                        <span ng-if="metricRates">{{processingStats.appliedBps*8 | metric}}bps</span>
+                        ({{processingStats.appliedBytesTotal | binary}}B)
                       </td>
                     </tr>
                     <tr>

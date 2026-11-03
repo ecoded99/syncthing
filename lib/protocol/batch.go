@@ -15,6 +15,7 @@ import (
 
 	"buf.build/go/protovalidate"
 	"github.com/syncthing/syncthing/internal/gen/bep"
+	"github.com/syncthing/syncthing/internal/transferstats"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 )
@@ -265,6 +266,7 @@ func (c *rawConnection) serveBatch(outer *Request) (RequestResponse, error) {
 		return nil, fmt.Errorf("invalid batch: %w", ErrInvalid)
 	}
 	b := append([]byte("STR1"), byte(len(reqs)))
+	prepared := int64(0)
 	for _, r := range reqs {
 		// Ordinary authorization, encryption wrappers, and source consistency checks.
 		res, err := c.model.Request(r)
@@ -283,9 +285,11 @@ func (c *rawConnection) serveBatch(outer *Request) (RequestResponse, error) {
 		}
 		b = binary.AppendUvarint(b, uint64(len(data)))
 		b = append(b, data...)
+		prepared += int64(len(data))
 		// Release the normal request limiter before reading the next member.
 		res.Close()
 	}
+	transferstats.Prepared.Add(prepared)
 	transferred = true
 	return &batchResponse{data: b, done: make(chan struct{}), release: c.batchServeMut.Unlock}, nil
 }
@@ -318,6 +322,13 @@ func decodeBatchResults(b []byte, reqs []*Request) ([]asyncResult, error) {
 	if len(b) != 0 {
 		return nil, errors.New("trailing batch response")
 	}
+	decoded := int64(0)
+	for _, res := range results {
+		if res.err == nil {
+			decoded += int64(len(res.val))
+		}
+	}
+	transferstats.Decoded.Add(decoded)
 	return results, nil
 }
 

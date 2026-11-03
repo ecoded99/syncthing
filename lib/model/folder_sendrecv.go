@@ -24,6 +24,7 @@ import (
 
 	"github.com/syncthing/syncthing/internal/itererr"
 	"github.com/syncthing/syncthing/internal/slogutil"
+	"github.com/syncthing/syncthing/internal/transferstats"
 	"github.com/syncthing/syncthing/lib/build"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/events"
@@ -1814,6 +1815,7 @@ func (f *sendReceiveFolder) finisherRoutine(ctx context.Context, in <-chan *shar
 			if err != nil {
 				f.newPullError(state.file.Name, fmt.Errorf("finishing: %w", err))
 			} else {
+				transferstats.Applied.Add(state.file.Size)
 				slog.InfoContext(ctx, "Synced file", f.LogAttr(), state.file.LogAttr(), slog.Group("blocks", slog.Int("local", state.reused+state.copyTotal), slog.Int("download", state.pullTotal)))
 
 				minBlocksPerBlock := state.file.BlockSize() / protocol.MinBlockSize
