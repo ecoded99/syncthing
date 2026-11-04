@@ -1,5 +1,7 @@
 name: Package macOS disk image
 on:
+  pull_request:
+    paths: ['script/macos/**', 'script/package_macos_dmg.sh', '.github/workflows/fork-macos-dmg.yml']
   workflow_dispatch:
     inputs:
       release_tag:
@@ -9,13 +11,13 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: macos-dmg-${{ inputs.release_tag }}
+  group: macos-dmg-${{ github.event_name }}-${{ github.ref }}-${{ inputs.release_tag }}
   cancel-in-progress: false
 jobs:
   package:
     runs-on: macos-14
     env:
-      RELEASE_TAG: ${{ inputs.release_tag }}
+      RELEASE_TAG: ${{ inputs.release_tag || 'v2.1.7-ecoded.11' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -45,6 +47,7 @@ jobs:
           path: syncthing-macos-arm64-*.dmg
           if-no-files-found: error
   publish:
+    if: github.event_name == 'workflow_dispatch'
     needs: package
     runs-on: ubuntu-latest
     permissions:
