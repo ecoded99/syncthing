@@ -22,6 +22,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -34,6 +35,10 @@ import (
 )
 
 const DisabledByCompilation = false
+
+const forkReleasesURL = "https://raw.githubusercontent.com/ecoded99/syncthing/update-feed/releases.json"
+
+var forkReleaseTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+-ecoded\.[0-9]+$`)
 
 const (
 	// Current binary size hovers around 10 MB. We give it some room to grow
@@ -126,8 +131,35 @@ func (s SortByRelease) Less(i, j int) bool {
 }
 
 func LatestRelease(releasesURL, current string, upgradeToPreReleases bool) (Release, error) {
+	releasesURL = effectiveReleasesURL(releasesURL)
 	rels := FetchLatestReleases(releasesURL, current)
+	if releasesURL == forkReleasesURL {
+		rels = forkReleases(rels)
+	}
 	return SelectLatestRelease(rels, current, upgradeToPreReleases)
+}
+
+func effectiveReleasesURL(releasesURL string) string {
+	// Existing installations may retain the upstream default in their config.
+	// Never offer an upstream binary as an update to this fork.
+	switch releasesURL {
+	case "https://upgrades.syncthing.net/meta.json", "https://api.github.com/repos/syncthing/syncthing/releases?per_page=30":
+		return forkReleasesURL
+	}
+	return releasesURL
+}
+
+// Fork releases use GitHub's prerelease flag for distribution, but form the
+// fork's normal update channel. Do not enable unrelated prereleases.
+func forkReleases(rels []Release) []Release {
+	result := make([]Release, 0, len(rels))
+	for _, rel := range rels {
+		if forkReleaseTag.MatchString(rel.Tag) {
+			rel.Prerelease = false
+			result = append(result, rel)
+		}
+	}
+	return result
 }
 
 func SelectLatestRelease(rels []Release, current string, upgradeToPreReleases bool) (Release, error) {
