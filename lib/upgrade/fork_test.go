@@ -2,7 +2,6 @@
 
 // Copyright (C) 2026 The Syncthing Authors.
 // SPDX-License-Identifier: MPL-2.0
-//
 package upgrade
 
 import (
@@ -29,6 +28,29 @@ func TestForkSignedArchive(t *testing.T) {
 		t.Run(platform, func(t *testing.T) {
 			testForkSignedArchive(t, private, platform)
 		})
+	}
+}
+
+func TestForkUpdateChannel(t *testing.T) {
+	for _, url := range []string{"https://upgrades.syncthing.net/meta.json", "https://api.github.com/repos/syncthing/syncthing/releases?per_page=30", forkReleasesURL} {
+		if got := effectiveReleasesURL(url); got != forkReleasesURL {
+			t.Fatalf("effectiveReleasesURL(%q) = %q", url, got)
+		}
+	}
+	custom := "https://example.com/releases.json"
+	if got := effectiveReleasesURL(custom); got != custom {
+		t.Fatalf("custom release URL changed to %q", got)
+	}
+	var releases []Release
+	for _, tag := range []string{"v2.1.7-ecoded.9", "v2.1.7-ecoded.11", "v2.1.7", "v2.1.8-beta.1"} {
+		releases = append(releases, Release{Tag: tag, Prerelease: true, Assets: []Asset{{Name: releaseNames(tag)[0] + "zip"}}})
+	}
+	selected, err := SelectLatestRelease(forkReleases(releases), "v2.1.7-ecoded.9", false)
+	if err != nil || selected.Tag != "v2.1.7-ecoded.11" {
+		t.Fatalf("selected %q: %v", selected.Tag, err)
+	}
+	if CompareVersions(selected.Tag, "v2.1.7-ecoded.11") != Equal {
+		t.Fatal("current fork release incorrectly reported as outdated")
 	}
 }
 
