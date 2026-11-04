@@ -1,0 +1,72 @@
+name: Package macOS disk image
+on:
+  pull_request:
+    paths: ['script/macos/**', 'script/package_macos_dmg.sh', '.github/workflows/fork-macos-dmg.yml']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release whose signed Mac ARM binary to package
+        required: true
+        default: v2.1.7-ecoded.11
+permissions:
+  contents: read
+concurrency:
+  group: macos-dmg-${{ github.event_name }}-${{ github.ref }}-${{ inputs.release_tag }}
+  cancel-in-progress: false
+jobs:
+  package:
+    runs-on: macos-14
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || 'v2.1.7-ecoded.11' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+          cache: true
+      - name: Download and verify the existing signed engine
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-ecoded\.[0-9]+$ ]]
+          test "$(uname -m)" = arm64
+          mkdir existing
+          gh release download "$RELEASE_TAG" --pattern '*.zip' --pattern SHA256SUMS.txt --dir existing
+          (cd existing && grep '[.]zip$' SHA256SUMS.txt | shasum -a 256 --check)
+          archive="existing/syncthing-macos-arm64-$RELEASE_TAG.zip"
+          go run ./cmd/dev/forkrelease -verify -archive "$archive"
+          unzip -p "$archive" syncthing > existing/syncthing
+          chmod 755 existing/syncthing
+          existing/syncthing --version
+      - name: Build, sign and test the mounted DMG
+        run: bash script/package_macos_dmg.sh existing/syncthing "$RELEASE_TAG" "$PWD/syncthing-macos-arm64-$RELEASE_TAG.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64-dmg
+          path: syncthing-macos-arm64-*.dmg
+          if-no-files-found: error
+  publish:
+    if: github.event_name == 'workflow_dispatch'
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-arm64-dmg
+          path: release
+      - name: Append disk image and extend checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release download "$RELEASE_TAG" --pattern '*.zip' --pattern SHA256SUMS.txt --dir existing
+          (cd existing && grep '[.]zip$' SHA256SUMS.txt | sha256sum --check)
+          gh release upload "$RELEASE_TAG" "release/syncthing-macos-arm64-$RELEASE_TAG.dmg"
+          cp release/*.dmg existing/
+          (cd existing && sha256sum *.zip *.dmg > SHA256SUMS.txt)
+          gh release upload "$RELEASE_TAG" existing/SHA256SUMS.txt --clobber
