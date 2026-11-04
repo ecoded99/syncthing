@@ -54,7 +54,12 @@ if CommandLine.arguments.contains("--self-test") {
         _ = try installEngine(bundledEngine, into: directory)
         let after = try FileManager.default.attributesOfItem(atPath: engine.path)[.systemFileNumber] as! NSNumber
         guard before == after else { throw NSError(domain: "Syncthing", code: 2) }
-        print("Launcher self-test passed: \(version); existing engine preserved")
+        // A stand-in for a later native updater release must not be downgraded.
+        try Data("#!/bin/sh\nprintf 'syncthing v999.0.0-ecoded.999 test\\n'\n".utf8).write(to: engine)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: engine.path)
+        _ = try installEngine(bundledEngine, into: directory)
+        guard try runVersion(engine) == "v999.0.0-ecoded.999" else { throw NSError(domain: "Syncthing", code: 3) }
+        print("Launcher self-test passed: \(version); equal and newer installed engines preserved")
         exit(0)
     } catch { fputs("Launcher self-test failed: \(error)\n", stderr); exit(1) }
 }

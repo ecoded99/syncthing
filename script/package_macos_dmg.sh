@@ -24,7 +24,7 @@ with open(sys.argv[1], 'wb') as f:
         'CFBundleIdentifier':'com.ecoded.syncthing', 'CFBundleExecutable':'Syncthing',
         'CFBundlePackageType':'APPL', 'CFBundleIconFile':'Syncthing.icns',
         'CFBundleShortVersionString':sys.argv[2][1:].split('-')[0],
-        'CFBundleVersion':sys.argv[2][1:].replace('-ecoded.', '.'),
+        'CFBundleVersion':sys.argv[2].rsplit('.', 1)[1],
         'LSMinimumSystemVersion':'12.0', 'NSHighResolutionCapable':True,
     }, f)
 PY
