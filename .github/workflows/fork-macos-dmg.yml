@@ -33,7 +33,7 @@ jobs:
           test "$(uname -m)" = arm64
           mkdir existing
           gh release download "$RELEASE_TAG" --pattern '*.zip' --pattern SHA256SUMS.txt --dir existing
-          (cd existing && shasum -a 256 --check SHA256SUMS.txt)
+          (cd existing && grep '[.]zip$' SHA256SUMS.txt | shasum -a 256 --check)
           archive="existing/syncthing-macos-arm64-$RELEASE_TAG.zip"
           go run ./cmd/dev/forkrelease -verify -archive "$archive"
           unzip -p "$archive" syncthing > existing/syncthing
@@ -65,7 +65,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           gh release download "$RELEASE_TAG" --pattern '*.zip' --pattern SHA256SUMS.txt --dir existing
-          (cd existing && sha256sum --check SHA256SUMS.txt)
+          (cd existing && grep '[.]zip$' SHA256SUMS.txt | sha256sum --check)
           gh release upload "$RELEASE_TAG" "release/syncthing-macos-arm64-$RELEASE_TAG.dmg"
           cp release/*.dmg existing/
           (cd existing && sha256sum *.zip *.dmg > SHA256SUMS.txt)
