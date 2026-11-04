@@ -94,7 +94,9 @@ type Model interface {
 	ClusterConfig(conn Connection, config *ClusterConfig) error
 	// The peer device closed the connection or an error occurred
 	Closed(conn Connection, err error)
-	// The peer device sent progress updates for the files it is currently downloading
+	// The peer device sent progress updates for the files it is currently downloading.
+	// This may run concurrently with Index and IndexUpdate, but remains ordered
+	// with other progress updates and ClusterConfig calls on this connection.
 	DownloadProgress(conn Connection, p *DownloadProgress) error
 }
 
@@ -190,6 +192,12 @@ type rawConnection struct {
 	nextID      int
 
 	idxMut sync.Mutex // ensures serialization of Index calls
+	// Progress may bypass slow index application only after every received
+	// cluster config has been applied. Configuration and index ordering stay
+	// on the dispatcher; no extra index queue or goroutine is introduced.
+	clusterConfigsRead    atomic.Uint64
+	clusterConfigsHandled atomic.Uint64
+	clusterConfigApplied  chan struct{}
 
 	inbox                 chan proto.Message
 	outbox                chan asyncMessage
@@ -271,6 +279,7 @@ func newRawConnection(deviceID DeviceID, reader io.Reader, writer io.Writer, clo
 		outbox:                make(chan asyncMessage),
 		closeBox:              make(chan asyncMessage),
 		clusterConfigBox:      make(chan *ClusterConfig),
+		clusterConfigApplied:  make(chan struct{}, 1),
 		dispatcherLoopStopped: make(chan struct{}),
 		closed:                make(chan struct{}),
 		compression:           compress,
@@ -455,6 +464,35 @@ func (c *rawConnection) readerLoop() {
 			c.internalClose(err)
 			return
 		}
+		if _, ok := msg.(*bep.ClusterConfig); ok {
+			c.clusterConfigsRead.Add(1)
+		}
+		if progress, ok := msg.(*bep.DownloadProgress); ok {
+			if received := c.clusterConfigsRead.Load(); received > 0 {
+				// All progress callbacks stay ordered on this reader. Waiting
+				// for configuration prevents bypassing handshake/authorization
+				// changes, including multiple configs received back-to-back.
+				for c.clusterConfigsHandled.Load() < received {
+					select {
+					case <-c.clusterConfigApplied:
+					case <-c.closed:
+						return
+					}
+				}
+				// A database index update can take seconds. Do not hold live
+				// progress behind it while other connections keep transferring.
+				metricDeviceRecvMessages.WithLabelValues(c.idString).Inc()
+				msgContext, err := messageContext(progress)
+				if err == nil {
+					err = c.model.DownloadProgress(downloadProgressFromWire(progress))
+				}
+				if err != nil {
+					c.internalClose(newHandleError(err, msgContext))
+					return
+				}
+				continue
+			}
+		}
 		select {
 		case c.inbox <- msg:
 		case <-c.closed:
@@ -505,6 +543,13 @@ func (c *rawConnection) dispatcherLoop() (err error) {
 			c.peerBatch.Store(bytesEqualVersion(getExtension(msg, batchCapabilityField)))
 			c.peerSpeed.Store(bytesEqualVersion(getExtension(msg, speedCapabilityField)))
 			err = c.model.ClusterConfig(clusterConfigFromWire(msg))
+			if err == nil {
+				c.clusterConfigsHandled.Add(1)
+				select {
+				case c.clusterConfigApplied <- struct{}{}:
+				default:
+				}
+			}
 
 		case *bep.Index:
 			idx := indexFromWire(msg)
