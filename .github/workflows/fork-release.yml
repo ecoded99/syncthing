@@ -61,10 +61,16 @@ jobs:
           $archive="syncthing-${{ matrix.platform }}-$env:GITHUB_REF_NAME.zip"
           go run ./cmd/dev/forkrelease -binary '${{ matrix.binary }}' -archive $archive
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - if: runner.os == 'macOS'
+        name: Package and verify macOS application disk image
+        shell: bash
+        run: bash script/package_macos_dmg.sh syncthing "$GITHUB_REF_NAME" "$PWD/syncthing-macos-arm64-$GITHUB_REF_NAME.dmg"
       - uses: actions/upload-artifact@v4
         with:
           name: signed-release-${{ matrix.platform }}
-          path: syncthing-${{ matrix.platform }}-*.zip
+          path: |
+            syncthing-${{ matrix.platform }}-*.zip
+            syncthing-${{ matrix.platform }}-*.dmg
           if-no-files-found: error
   publish:
     needs: build
@@ -79,7 +85,7 @@ jobs:
           path: release
       - name: Generate checksums
         working-directory: release
-        run: sha256sum *.zip > SHA256SUMS.txt
+        run: sha256sum *.zip *.dmg > SHA256SUMS.txt
       - name: Publish canary release
         env:
           GH_TOKEN: ${{ github.token }}
