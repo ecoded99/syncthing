@@ -56,3 +56,18 @@ processing remains a significant part of the local small-file measurements;
 increasing concurrency alone will not remove that cost. Maintain ordering and
 version consistency when changing index batching. Additional network connections
 have not been enabled by this change.
+
+## Remote folder progress
+
+Download-progress callbacks can run while the preceding index message is being
+applied to the database. Previously both used the same dispatcher, allowing a
+slow index application to hold the displayed remote percentage at zero while
+other connections continued transferring. Progress remains ordered on the
+connection reader and waits for all preceding cluster configurations to finish.
+Index messages retain their existing order; no additional index queue is added.
+
+A deterministic protocol regression blocks index application and requires live
+progress to arrive before releasing it. Additional tests cover configuration
+gating, progress ordering, invalid pre-handshake messages and callback errors.
+Messages still cannot overtake unread messages on the wire, and the percentage
+still depends on the peer reporting progress and the completion query finishing.

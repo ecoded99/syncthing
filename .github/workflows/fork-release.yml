@@ -38,7 +38,7 @@ jobs:
       - if: runner.os != 'Windows'
         run: go test -race ./lib/scanner
       - if: runner.os != 'Windows'
-        run: go test -race ./lib/protocol ./lib/model -run 'Test.*Bundle|TestBatch' -count=1
+        run: go test -race ./lib/protocol ./lib/model -run 'Test.*Bundle|TestBatch|TestDownloadProgress' -count=1
       - name: Build ${{ matrix.platform }}
         shell: pwsh
         run: |
@@ -91,7 +91,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "$GITHUB_REF_NAME" release/* --prerelease --title "$GITHUB_REF_NAME" --notes 'Signed updater packages for Windows amd64 and macOS Apple Silicon. Faster scanning uses batched metadata, four bounded comparison workers and hashing during discovery. Scan status shows phases, scope, trigger and entry counts. Throughput refreshes every second, with separate file writes, finalized bytes and files/s. QUIC preference, TCP fallback, hash verification, conflicts and durable finalization remain enforced. Existing bundle opt-in settings are preserved. macOS binaries are updater-signed but not Apple Developer ID signed or notarized. See SCAN_PIPELINE.md, TRANSFER_STATS.md and RELEASE-READINESS.md.'
+          gh release create "$GITHUB_REF_NAME" release/* --prerelease --title "$GITHUB_REF_NAME" --notes 'Signed updater packages for Windows amd64 and macOS Apple Silicon. Live remote progress can update during slow index application, with configuration and progress ordering preserved. Includes native protocol regression tests. Faster scanning uses batched metadata, four bounded comparison workers and hashing during discovery. Scan status shows phases, scope, trigger and entry counts. Throughput refreshes every second, with separate file writes, finalized bytes and files/s. QUIC preference, TCP fallback, hash verification, conflicts and durable finalization remain enforced. Existing bundle opt-in settings are preserved. macOS binaries are updater-signed but not Apple Developer ID signed or notarized. See SCAN_PIPELINE.md, TRANSFER_STATS.md and RELEASE-READINESS.md.'
   update-feed:
     needs: publish
     permissions:
