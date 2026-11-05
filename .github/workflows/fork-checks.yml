@@ -70,6 +70,8 @@ jobs:
       - if: runner.os != 'Windows'
         run: go test -race ./internal/db/sqlite -run 'TestMtime' -count=1
       - if: runner.os != 'Windows'
+        run: go test -race ./lib/fs -run 'TestWalkParallel|TestWalk' -count=1
+      - if: runner.os != 'Windows'
         run: go test -race ./lib/cloudbackup ./lib/scanner ./lib/protocol
       - if: runner.os != 'Windows'
         run: go test -race ./lib/model -run 'Test.*Bundle|Test.*Progress|Test.*Completion|Test.*DeviceDownloadState|TestBlocksToSize|TestRequestTemporaryAfterPromotion|TestScanDeletion' -count=1

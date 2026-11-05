@@ -13,6 +13,8 @@ package fs
 import (
 	"errors"
 	"path/filepath"
+	"runtime"
+	"sync"
 )
 
 var ErrInfiniteRecursion = errors.New("infinite filesystem recursion detected")
@@ -81,7 +83,7 @@ func NewWalkFilesystem(next Filesystem) Filesystem {
 }
 
 // walk recursively descends path, calling walkFn.
-func (f *walkFilesystem) walk(path string, info FileInfo, walkFn WalkFunc, ancestors *ancestorDirList) error {
+func (f *walkFilesystem) walk(path string, info FileInfo, walkFn WalkFunc, ancestors *ancestorDirList, workers int) error {
 	l.Debugf("walk: path=%s", path)
 	path, err := Canonicalize(path)
 	if err != nil {
@@ -114,21 +116,63 @@ func (f *walkFilesystem) walk(path string, info FileInfo, walkFn WalkFunc, ances
 		return walkFn(path, info, err)
 	}
 
-	for _, name := range names {
-		filename := filepath.Join(path, name)
-		fileInfo, err := f.Lstat(filename)
-		if err != nil {
-			if err := walkFn(filename, fileInfo, err); err != nil && !errors.Is(err, SkipDir) {
-				return err
-			}
-		} else {
-			err = f.walk(filename, fileInfo, walkFn, ancestors)
+	if workers == 1 {
+		for _, name := range names {
+			filename := filepath.Join(path, name)
+			fileInfo, err := f.Lstat(filename)
 			if err != nil {
+				if err := walkFn(filename, fileInfo, err); err != nil && !errors.Is(err, SkipDir) {
+					return err
+				}
+			} else if err := f.walk(filename, fileInfo, walkFn, ancestors, workers); err != nil {
 				if !fileInfo.IsDir() || !errors.Is(err, SkipDir) {
 					return err
 				}
 			}
 		}
+		return nil
+	}
+
+	for offset := 0; offset < len(names); {
+		count := min(workers, len(names)-offset)
+		infos := make([]FileInfo, count)
+		errs := make([]error, count)
+		stat := func(i int) { infos[i], errs[i] = f.Lstat(filepath.Join(path, names[offset+i])) }
+		if count == 1 {
+			stat(0)
+		} else {
+			var wg sync.WaitGroup
+			for i := range count {
+				wg.Go(func() { stat(i) })
+			}
+			wg.Wait()
+		}
+		// Descending into a directory can take arbitrarily long. Do not reuse
+		// metadata prefetched before that descent for subsequent siblings.
+		refresh := false
+		for i, name := range names[offset : offset+count] {
+			filename := filepath.Join(path, name)
+			fileInfo, err := infos[i], errs[i]
+			if refresh {
+				fileInfo, err = f.Lstat(filename)
+			}
+			if err != nil {
+				if err := walkFn(filename, fileInfo, err); err != nil && !errors.Is(err, SkipDir) {
+					return err
+				}
+			} else {
+				err = f.walk(filename, fileInfo, walkFn, ancestors, workers)
+				if fileInfo.IsDir() {
+					refresh = true
+				}
+				if err != nil {
+					if !fileInfo.IsDir() || !errors.Is(err, SkipDir) {
+						return err
+					}
+				}
+			}
+		}
+		offset += count
 	}
 	return nil
 }
@@ -140,6 +184,20 @@ func (f *walkFilesystem) walk(path string, info FileInfo, walkFn WalkFunc, ances
 // large directories Walk can be inefficient.
 // Walk does not follow symbolic links.
 func (f *walkFilesystem) Walk(root string, walkFn WalkFunc) error {
+	return f.walkWithWorkers(root, walkFn, 1)
+}
+
+// WalkWithLstatWorkers keeps callbacks and traversal ordered, parallelizing
+// only fresh metadata reads in small batches. Other Walk callers retain their
+// serial behavior. Filesystems without our walk wrapper use their own Walk.
+func WalkWithLstatWorkers(filesystem Filesystem, root string, walkFn WalkFunc, workers int) error {
+	if walker, ok := unwrapFilesystem[*walkFilesystem](filesystem); ok {
+		return walker.walkWithWorkers(root, walkFn, max(1, min(workers, 4, runtime.GOMAXPROCS(0))))
+	}
+	return filesystem.Walk(root, walkFn)
+}
+
+func (f *walkFilesystem) walkWithWorkers(root string, walkFn WalkFunc, workers int) error {
 	info, err := f.Lstat(root)
 	if err != nil {
 		return walkFn(root, nil, err)
@@ -148,7 +206,7 @@ func (f *walkFilesystem) Walk(root string, walkFn WalkFunc) error {
 	if f.checkInfiniteRecursion {
 		ancestors = &ancestorDirList{fs: f.Filesystem}
 	}
-	return f.walk(root, info, walkFn, ancestors)
+	return f.walk(root, info, walkFn, ancestors, workers)
 }
 
 func (f *walkFilesystem) underlying() (Filesystem, bool) {

@@ -24,6 +24,40 @@ func readReparseTag(path string) (uint32, error) {
 	if err != nil {
 		return 0, fmt.Errorf("syscall.UTF16PtrFromString failed with: %s", err)
 	}
+	if tag, err := readReparseTagByName(namep); err == nil {
+		return tag, nil
+	}
+	return readReparseTagHandle(namep)
+}
+
+var getFileInformationByName = windows.NewLazySystemDLL("kernelbase.dll").NewProc("GetFileInformationByName")
+
+// Windows 11 can query fresh metadata without opening another file handle.
+// Unlike FindFirstFile's directory metadata, this is a file information query.
+// Older Windows/filesystems and every error retain the existing handle path.
+func readReparseTagByName(name *uint16) (uint32, error) {
+	if err := getFileInformationByName.Find(); err != nil {
+		return 0, err
+	}
+	// FILE_STAT_BASIC_INFORMATION, FileStatBasicByNameInfo (3).
+	// https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-getfileinformationbyname
+	var info struct {
+		FileID, Creation, Access, Write, Change, Allocation, Size     int64
+		Attributes, Tag, Links, DeviceType, Characteristics, Reserved uint32
+		Volume                                                        int64
+		ID128                                                         [16]byte
+	}
+	ok, _, err := getFileInformationByName.Call(uintptr(unsafe.Pointer(name)), 3, uintptr(unsafe.Pointer(&info)), unsafe.Sizeof(info))
+	if ok == 0 {
+		return 0, err
+	}
+	if info.Attributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+		return 0, nil
+	}
+	return info.Tag, nil
+}
+
+func readReparseTagHandle(namep *uint16) (uint32, error) {
 	attrs := uint32(syscall.FILE_FLAG_BACKUP_SEMANTICS | syscall.FILE_FLAG_OPEN_REPARSE_POINT)
 	h, err := syscall.CreateFile(namep, 0, 0, nil, syscall.OPEN_EXISTING, attrs, 0)
 	if err != nil {

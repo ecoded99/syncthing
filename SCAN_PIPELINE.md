@@ -149,3 +149,25 @@ That pair used 49.30 s → 40.91 s of process CPU across all operations and
 deletions and unchanged index sequences were verified. These are warm synthetic
 local fixtures, not measurements of the live large folder or guarantees for
 other disks; the benchmark alternates run order across trials for comparison.
+
+## Large-folder metadata checks
+
+Scanner discovery uses four concurrent fresh Lstat reads per batch, with serial
+callbacks and directory traversal. After descending into a directory, remaining
+sibling metadata is refreshed before use. No metadata survives a scan and no
+directory listing replaces a fresh file check. Ordinary filesystem Walk callers
+retain their original serial traversal.
+
+On supported Windows versions, reparse-tag classification uses the fresh
+GetFileInformationByName query rather than opening another file handle after
+os.Lstat. Missing APIs, unsupported filesystems and query errors use the prior
+handle-based check. Fully local Cloud Files placeholders remain regular;
+offline and recall-on-access placeholders remain excluded from hashing.
+
+The opt-in BenchmarkExistingFolderScan measures discovery and deletion checks
+against an independent SQLite backup and the real folder. It starts no peers,
+watchers or Explorer provider, disables cleanup and normalization, and fails
+if file metadata changes during measurement. Set STSCANBENCH to a directory
+containing folder.json, snapshot.marker (sqlite-backup) and an index-v2 backup,
+then run go test ./lib/model -run '^$' -bench '^BenchmarkExistingFolderScan$'
+-benchtime=1x. Never point this benchmark at the live database directory.

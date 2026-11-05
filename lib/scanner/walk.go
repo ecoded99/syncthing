@@ -246,7 +246,7 @@ func (w *walker) scan(ctx context.Context, toHashChan chan<- protocol.FileInfo, 
 	finishMetadata := w.startMetadata(ctx, toHashChan, finishedChan)
 	hashFiles := w.walkAndHashFiles(ctx, toHashChan, finishedChan)
 	if len(w.Subs) == 0 {
-		if err := w.Filesystem.Walk(".", hashFiles); isWarnableError(err) {
+		if err := fs.WalkWithLstatWorkers(w.Filesystem, ".", hashFiles, 4); isWarnableError(err) {
 			w.EventLogger.Log(events.Failure, walkFailureEventDesc)
 			slog.ErrorContext(ctx, "Aborted scan due to an unexpected error", slogutil.Error(err))
 		}
@@ -256,7 +256,7 @@ func (w *walker) scan(ctx context.Context, toHashChan chan<- protocol.FileInfo, 
 				l.Debugf("%v: Skip walking %v as it is below a symlink", w, sub)
 				continue
 			}
-			if err := w.Filesystem.Walk(sub, hashFiles); isWarnableError(err) {
+			if err := fs.WalkWithLstatWorkers(w.Filesystem, sub, hashFiles, 4); isWarnableError(err) {
 				w.EventLogger.Log(events.Failure, walkFailureEventDesc)
 				slog.ErrorContext(ctx, "Aborted scan due to an unexpected error", slogutil.FilePath(sub), slogutil.Error(err))
 			}
