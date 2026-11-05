@@ -23,6 +23,14 @@ jobs:
       - run: node script/test_gui_stats.cjs
       - run: go build ./cmd/syncthing
       - run: go test ./cmd/dev/forkrelease ./cmd/syncthing ./internal/db/sqlite ./lib/cloudbackup ./lib/config ./lib/scanner ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/osutil ./lib/fs ./lib/explorerstatus
+      - if: runner.os == 'Linux'
+        name: Verify CGO-free Linux release build
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          go test ./cmd/dev/forkrelease ./cmd/syncthing ./internal/db/sqlite ./lib/cloudbackup ./lib/config ./lib/scanner ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/osutil ./lib/fs ./lib/explorerstatus
+          go run build.go -version v2.1.7-ecoded.1 build
+          ./syncthing --version
       - if: runner.os == 'Windows'
         uses: actions/setup-python@v5
         with:
