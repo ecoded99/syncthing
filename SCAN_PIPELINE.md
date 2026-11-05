@@ -99,6 +99,53 @@ v2.1.7-ecoded.10 measured:
 | Modified/deleted-file scan | 6.51 s | 5.35 s | 18% |
 
 These are warm local synthetic fixtures, not measurements of the live 509,000-file
-folder. Filesystem enumeration/stat calls and the model's deletion pass remain
-serial and limit whole-scan improvements. The comparison-stage gain must not be
+folder. At that revision, filesystem enumeration/stat calls and the model's deletion
+pass remained serial and limited whole-scan improvements. The comparison-stage gain must not be
 presented as a twofold whole-scan improvement.
+
+## Parallel deletion verification
+
+The follow-up optimization keeps complete scans and fresh existence checks.
+Deletion verification now checks up to 128 indexed entries at a time using
+four workers (never more than GOMAXPROCS). Only filesystem reads run in
+parallel. Results, ignore-parent decisions, receive-only reconciliation and
+database updates stay in their original order. Each worker retains the existing
+symlink-aware deletion checks. Permission and other I/O errors are not treated
+as missing files. Cancellation waits for in-flight checks and stops the index
+iterator; only one batch is buffered, rather than a folder-wide seen-file map.
+
+SQLite also records when a folder's timestamp-override table is known to be
+empty. In that case, stat calls need no empty per-file override query. The first
+override write disables this shortcut **before** committing. Reopening a folder
+checks for persisted overrides; an initialization error always uses the full SQL
+lookup. This does not cache filesystem metadata or assume a directory is unchanged.
+No watcher recovery, startup, periodic check or hash verification is disabled.
+
+`BenchmarkScanDeletionPipeline` covers real Windows files, SQLite iteration and
+mtime resolution, including both empty and nonempty override tables. An initial
+4,096-file empty-table run measured 348–373 ms for the original serial deletion
+loop and 113–118 ms with four bounded workers. This is a deletion-stage result,
+not a whole-scan speedup. Eight workers reduced that stage to 92–94 ms; four are
+the conservative default to limit disk and CPU pressure.
+
+Regression tests cover permissions, missing paths, parent files/symlinks,
+case conflicts, ignore rules, unchanged/deleted/unsupported entries, ordering
+across batch boundaries, iterator errors, early stop, bounded lookahead and
+cancellation. Timestamp tests cover concurrent first writes and reopening
+persisted overrides. CI runs these with the race detector and checks full scans
+on a disposable native executable before signing a release.
+
+The complete-operation benchmark now supports `--profile` and records process
+CPU seconds and peak working set on Windows. It runs its own service process
+without the restart monitor so those resource measurements cover the scanner,
+not just a launcher. Fixtures and CPU profiles remain in the selected new work
+directory; production folders and configuration are never opened.
+
+A 16,384-file Windows comparison against v2.1.7-ecoded.15 (one complete pair)
+measured 21.09 s → 19.57 s for initial scan and indexing, 4.38 s → 2.59 s for
+median unchanged full scans, and 5.40 s → 2.47 s after edits/additions/deletions.
+That pair used 49.30 s → 40.91 s of process CPU across all operations and
+63.2 MiB → 60.9 MiB peak working set. All 85 indexed hash samples, all ten
+deletions and unchanged index sequences were verified. These are warm synthetic
+local fixtures, not measurements of the live large folder or guarantees for
+other disks; the benchmark alternates run order across trials for comparison.

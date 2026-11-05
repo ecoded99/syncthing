@@ -7,6 +7,8 @@
 package sqlite
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -50,5 +52,60 @@ func TestMtimePairs(t *testing.T) {
 	if !gt0.IsZero() || !gt1.IsZero() {
 		t.Log(gt0, gt1)
 		t.Log("bad times")
+	}
+}
+
+func TestMtimeShortcutPersistence(t *testing.T) {
+	path := t.TempDir()
+	database, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := database.getFolderDB("mtime-test", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !folder.mtimesAbsent.Load() {
+		t.Fatal("new folder has no timestamp overrides")
+	}
+	ondisk, virtual := time.Unix(1700000000, 0), time.Unix(1700000000, 12345)
+	var wg sync.WaitGroup
+	for worker := range 8 {
+		wg.Go(func() {
+			for item := range 32 {
+				name := fmt.Sprintf("%d-%d", worker, item)
+				database.GetMtime("mtime-test", name)
+				if err := database.PutMtime("mtime-test", name, ondisk, virtual); err != nil {
+					t.Error(err)
+					return
+				}
+				gotDisk, gotVirtual := database.GetMtime("mtime-test", name)
+				if !gotDisk.Equal(ondisk) || !gotVirtual.Equal(virtual) {
+					t.Error("completed override write was hidden")
+				}
+			}
+		})
+	}
+	wg.Wait()
+	if folder.mtimesAbsent.Load() {
+		t.Fatal("override write did not invalidate shortcut")
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	database, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	gotDisk, gotVirtual := database.GetMtime("mtime-test", "0-0")
+	if !gotDisk.Equal(ondisk) || !gotVirtual.Equal(virtual) {
+		t.Fatal("reopened overrides were hidden")
+	}
+	if err := database.DeleteMtime("mtime-test", "0-0"); err != nil {
+		t.Fatal(err)
+	}
+	if a, b := database.GetMtime("mtime-test", "0-0"); !a.IsZero() || !b.IsZero() {
+		t.Fatal("deleted override retained")
 	}
 }

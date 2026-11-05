@@ -41,9 +41,11 @@ jobs:
           CGO_ENABLED: ${{ matrix.platform == 'linux-amd64' && '0' || '1' }}
         run: go test ./cmd/dev/forkrelease ./cmd/syncthing ./internal/db/sqlite ./lib/cloudbackup ./lib/config ./lib/scanner ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/osutil ./lib/fs ./lib/explorerstatus
       - if: runner.os != 'Windows'
+        run: go test -race ./internal/db/sqlite -run 'TestMtime' -count=1
+      - if: runner.os != 'Windows'
         run: go test -race ./lib/scanner
       - if: runner.os != 'Windows'
-        run: go test -race ./lib/protocol ./lib/model -run 'Test.*Bundle|TestBatch|Test.*Progress|Test.*Completion|Test.*DeviceDownloadState|TestBlocksToSize|TestRequestTemporaryAfterPromotion' -count=1
+        run: go test -race ./lib/protocol ./lib/model -run 'Test.*Bundle|TestBatch|Test.*Progress|Test.*Completion|Test.*DeviceDownloadState|TestBlocksToSize|TestRequestTemporaryAfterPromotion|TestScanDeletion' -count=1
       - name: Build ${{ matrix.platform }}
         shell: pwsh
         run: |
@@ -68,6 +70,12 @@ jobs:
           python script/smoke_sync_status.py --binary syncthing.exe --work "${{ runner.temp }}/sync-status-tcp" --transport tcp
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node script/test_gui_stats.cjs "${{ runner.temp }}/sync-status-quic/results.json" "${{ runner.temp }}/sync-status-tcp/results.json"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - if: runner.os == 'Windows'
+        name: Verify reliable full scans on the native executable
+        shell: pwsh
+        run: |
+          python script/benchmark_scans.py --binary syncthing.exe --baseline-binary syncthing.exe --work "${{ runner.temp }}/scan-reliability" --files 512 --trials 1
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Sign archive
         shell: pwsh

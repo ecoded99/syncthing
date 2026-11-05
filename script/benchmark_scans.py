@@ -10,6 +10,7 @@ parser.add_argument('--baseline-binary',required=True,type=Path)
 parser.add_argument('--work',required=True,type=Path)
 parser.add_argument('--files',type=int,default=4096)
 parser.add_argument('--trials',type=int,default=2)
+parser.add_argument('--profile',action='store_true',help='Write a CPU profile in each disposable peer directory')
 args=parser.parse_args()
 if args.files<128 or args.trials<1:parser.error('--files must be at least 128 and --trials positive')
 root=args.work.resolve()
@@ -21,6 +22,24 @@ def req(port,key,path,method='GET'):
  r=urllib.request.Request(f'http://127.0.0.1:{port}/rest/'+path,headers={'X-API-Key':key},method=method)
  with urllib.request.urlopen(r,timeout=120) as response:
   data=response.read();return json.loads(data) if data else None
+def process_usage(process):
+ # Sample only the disposable peer. STMONITORED below keeps the service in
+ # this child so these counters cannot accidentally measure just its monitor.
+ if os.name!='nt':return {}
+ import ctypes
+ from ctypes import wintypes
+ class Memory(ctypes.Structure):
+  _fields_=[('cb',wintypes.DWORD),('faults',wintypes.DWORD)]+[(name,ctypes.c_size_t) for name in
+   ('peak_ws','ws','peak_paged','paged','peak_nonpaged','nonpaged','pagefile','peak_pagefile')]
+ kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+ kernel.GetProcessTimes.argtypes=[wintypes.HANDLE]+[ctypes.POINTER(wintypes.FILETIME)]*4
+ kernel.K32GetProcessMemoryInfo.argtypes=[wintypes.HANDLE,ctypes.POINTER(Memory),wintypes.DWORD]
+ times=[wintypes.FILETIME() for _ in range(4)];memory=Memory();memory.cb=ctypes.sizeof(memory)
+ if not kernel.GetProcessTimes(int(process._handle),*[ctypes.byref(value) for value in times]):raise ctypes.WinError(ctypes.get_last_error())
+ if not kernel.K32GetProcessMemoryInfo(int(process._handle),ctypes.byref(memory),memory.cb):raise ctypes.WinError(ctypes.get_last_error())
+ cpu=sum((value.dwHighDateTime<<32)+value.dwLowDateTime for value in times[2:])/10000000
+ return {'cpu_s':cpu,'peak_working_set_bytes':memory.peak_ws}
+
 cases=[(trial,mode) for trial in range(1,args.trials+1) for mode in (['before','after'] if trial%2 else ['after','before'])]
 for trial,mode in cases:
  run=root/f'{trial}-{mode}';run.mkdir();fixture=run/'fixture';fixture.mkdir()
@@ -35,7 +54,8 @@ for trial,mode in cases:
  home=run/'home';_,key=bench.setup(home,fixture,port,gui,None,None)
  log=open(run/'console.log','wb');start=time.perf_counter()
  options={'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {'start_new_session':True}
- process=subprocess.Popen([str(binary),'serve','--home',str(home),'--no-browser','--no-tray','--no-restart','--no-upgrade','--log-file=-'],env=bench.ENV,stdout=log,stderr=subprocess.STDOUT,**options)
+ process_env={**bench.ENV,'STMONITORED':'1', **({'STCPUPROFILE':'1'} if args.profile else {})}
+ process=subprocess.Popen([str(binary),'serve','--home',str(home),'--no-browser','--no-tray','--no-restart','--no-upgrade','--log-file=-'],env=process_env,cwd=run,stdout=log,stderr=subprocess.STDOUT,**options)
  try:
   while time.perf_counter()-start<180:
    if process.poll() is not None:raise RuntimeError('isolated peer exited')
@@ -47,9 +67,12 @@ for trial,mode in cases:
   else:raise TimeoutError('initial scan')
   initial=time.perf_counter()-start
   sequence=status['sequence']
-  unchanged=[]
+  unchanged=[];unchanged_cpu=[]
   for _ in range(3):
+   usage_before=process_usage(process)
    start=time.perf_counter();req(gui,key,'db/scan?folder=benchmark','POST');unchanged.append(time.perf_counter()-start)
+   usage_after=process_usage(process)
+   if usage_before:unchanged_cpu.append(usage_after['cpu_s']-usage_before['cpu_s'])
    status=req(gui,key,'db/status?folder=benchmark');assert status['sequence']==sequence,(mode,'unchanged files reindexed')
   names=list(manifest)
   for name in names[:20]:
@@ -64,7 +87,7 @@ for trial,mode in cases:
    assert not info['deleted'] and info['numBlocks']==1,(mode,name)
   for name in names[20:30]:
    info=req(gui,key,'db/file?folder=benchmark&file='+urllib.parse.quote(name,safe=''))['local'];assert info['deleted'],name
-  row={'trial':trial,'mode':mode,'files':N,'initial_s':initial,'unchanged_s':unchanged,'changed_s':changed,'index_hash_samples':85,'deletions':10,'unchanged_sequence_preserved':True}
+  row={'trial':trial,'mode':mode,'files':N,'initial_s':initial,'unchanged_s':unchanged,'unchanged_cpu_s':unchanged_cpu,'process_usage':process_usage(process),'changed_s':changed,'index_hash_samples':85,'deletions':10,'unchanged_sequence_preserved':True}
   rows.append(row);(root/'results.json').write_text(json.dumps(rows,indent=2));print(json.dumps(row),flush=True)
  finally:
   try:req(gui,key,'system/shutdown','POST')
