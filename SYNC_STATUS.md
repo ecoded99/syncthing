@@ -38,7 +38,10 @@ behavior; the GUI displays data progress and pending operations separately.
 
 Backend fixes include local completion accounting for active pullers, correct
 byte estimates for files aligned to the block size, and concurrent initialization
-of remote per-folder progress without losing updates.
+of remote per-folder progress without losing updates. Completed pullers remain
+accounted for until their database batch commits; incoming peer indexes likewise
+retain temporary progress until committed. Requests for recently promoted
+temporary files can fall back to the final regular file with hash validation.
 
 ## Local validation
 

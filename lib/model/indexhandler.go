@@ -369,8 +369,6 @@ func (s *indexHandler) receive(fs []protocol.FileInfo, update bool, op string, p
 
 	defer runner.SchedulePull()
 
-	s.downloads.Update(s.folder, makeForgetUpdate(fs))
-
 	if !update {
 		if err := s.sdb.DropAllFiles(s.folder, deviceID); err != nil {
 			return err
@@ -438,6 +436,8 @@ func (s *indexHandler) receive(fs []protocol.FileInfo, update bool, op string, p
 	if err := s.sdb.Update(s.folder, deviceID, fs); err != nil {
 		return err
 	}
+	// Keep temporary progress until the committed index accounts for these files.
+	s.downloads.Update(s.folder, makeForgetUpdate(fs))
 	seq, err := s.sdb.GetDeviceSequence(s.folder, deviceID)
 	if err != nil {
 		return err

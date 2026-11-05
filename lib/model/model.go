@@ -2065,9 +2065,9 @@ func (m *model) Request(conn protocol.Connection, req *protocol.Request) (out pr
 	if req.FromTemporary {
 		tempFn := fs.TempName(req.Name)
 
-		if info, err := folderFs.Lstat(tempFn); err != nil || !info.IsRegular() {
-			// Reject reads for anything that doesn't exist or is something
-			// other than a regular file.
+		if info, err := folderFs.Lstat(tempFn); !fs.IsNotExist(err) && (err != nil || !info.IsRegular()) {
+			// A missing temporary file may already have been promoted. Reject
+			// other errors and non-regular files, including symlinks.
 			l.Debugf("%v REQ(in) failed stating temp file (%v): %s: %q / %q o=%d s=%d", m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
 			return nil, protocol.ErrNoSuchFile
 		}

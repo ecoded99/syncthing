@@ -43,7 +43,7 @@ jobs:
       - if: runner.os != 'Windows'
         run: go test -race ./lib/scanner
       - if: runner.os != 'Windows'
-        run: go test -race ./lib/protocol ./lib/model -run 'Test.*Bundle|TestBatch|Test.*Progress|Test.*Completion|Test.*DeviceDownloadState|TestBlocksToSize' -count=1
+        run: go test -race ./lib/protocol ./lib/model -run 'Test.*Bundle|TestBatch|Test.*Progress|Test.*Completion|Test.*DeviceDownloadState|TestBlocksToSize|TestRequestTemporaryAfterPromotion' -count=1
       - name: Build ${{ matrix.platform }}
         shell: pwsh
         run: |

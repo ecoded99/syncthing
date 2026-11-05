@@ -9,6 +9,7 @@ package model
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"io"
 	"path/filepath"
@@ -1442,5 +1443,30 @@ func TestRequestGlobalInvalidToValid(t *testing.T) {
 			t.Log("got index with invalid file")
 			gotInvalid = true
 		}
+	}
+}
+
+func TestRequestTemporaryAfterPromotion(t *testing.T) {
+	m, _, fcfg := setupModelWithConnection(t)
+	filesystem := fcfg.Filesystem()
+	defer cleanupModelAndRemoveDir(m, filesystem.URI())
+	contents := []byte("promoted file still satisfies advertised temporary blocks")
+	writeFile(t, filesystem, "promoted", contents)
+	hash := sha256.Sum256(contents)
+	req := &protocol.Request{Folder: "default", Name: "promoted", Size: len(contents), Hash: hash[:], FromTemporary: true}
+	res, err := m.Request(device1Conn, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(res.Data(), contents) {
+		t.Fatal("incorrect promoted content")
+	}
+	res.Close()
+	req.Hash = make([]byte, sha256.Size)
+	if res, err := m.Request(device1Conn, req); err == nil || res != nil {
+		if res != nil {
+			res.Close()
+		}
+		t.Fatal("promoted fallback accepted a mismatching hash")
 	}
 }

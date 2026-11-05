@@ -468,3 +468,35 @@ func sendMsgs(p *ProgressEmitter) {
 		update.send(ctx)
 	}
 }
+
+func TestProgressFinalizationHandoff(t *testing.T) {
+	p := &ProgressEmitter{registry: make(map[string]map[string]*sharedPullerState), timer: time.NewTimer(time.Hour)}
+	defer p.timer.Stop()
+	file := protocol.FileInfo{Name: "finished", Size: protocol.MinBlockSize, Blocks: []protocol.BlockInfo{{Size: protocol.MinBlockSize}}, Version: protocol.Vector{}.Update(1)}
+	state := &sharedPullerState{folder: "folder", file: file, closed: true, reused: 1}
+	p.Register(state)
+	if got := p.BytesCompleted("folder"); got != file.Size {
+		t.Fatalf("finished bytes disappeared before commit: %d", got)
+	}
+	otherVersion := file
+	otherVersion.Version = file.Version.Copy().Update(1)
+	p.DeregisterFinalized("folder", []protocol.FileInfo{otherVersion})
+	if p.lenRegistry() != 1 {
+		t.Fatal("another version cleared finished progress")
+	}
+	p.DeregisterFinalized("folder", []protocol.FileInfo{file})
+	if p.BytesCompleted("folder") != 0 || p.lenRegistry() != 0 {
+		t.Fatal("committed progress retained")
+	}
+	replacement := &sharedPullerState{folder: "folder", file: file, reused: 1}
+	p.Register(replacement)
+	p.Deregister(state)
+	p.DeregisterFinalized("folder", []protocol.FileInfo{file})
+	if p.lenRegistry() != 1 {
+		t.Fatal("old finalization cleared a new active puller")
+	}
+	p.Deregister(replacement)
+	if p.lenRegistry() != 0 {
+		t.Fatal("failed puller retained")
+	}
+}

@@ -1372,7 +1372,10 @@ func (f *folder) updateLocalsFromScanning(fs []protocol.FileInfo) error {
 }
 
 func (f *folder) updateLocalsFromPulling(fs []protocol.FileInfo) error {
-	if err := f.updateLocals(fs); err != nil {
+	err := f.updateLocals(fs)
+	// Release even on database errors so failed batches cannot retain pullers.
+	f.model.progressEmitter.DeregisterFinalized(f.folderID, fs)
+	if err != nil {
 		return err
 	}
 	f.emitDiskChangeEvents(fs, events.RemoteChangeDetected)

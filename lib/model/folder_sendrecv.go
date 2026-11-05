@@ -1831,7 +1831,7 @@ func (f *sendReceiveFolder) finisherRoutine(ctx context.Context, in <-chan *shar
 				blockStatsMut.Unlock()
 			}
 
-			if f.Type != config.FolderTypeReceiveEncrypted {
+			if err != nil && f.Type != config.FolderTypeReceiveEncrypted {
 				f.model.progressEmitter.Deregister(state)
 			}
 

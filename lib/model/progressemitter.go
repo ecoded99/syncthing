@@ -266,7 +266,22 @@ func (t *ProgressEmitter) Deregister(s *sharedPullerState) {
 	}
 
 	l.Debugln("progress emitter: deregistering", s.folder, s.file.Name)
-	delete(t.registry[s.folder], s.file.Name)
+	if t.registry[s.folder][s.file.Name] == s {
+		delete(t.registry[s.folder], s.file.Name)
+	}
+}
+
+// DeregisterFinalized hands completed files off to committed database counts.
+// Keep their downloaded bytes visible while the database batch is pending.
+func (t *ProgressEmitter) DeregisterFinalized(folder string, files []protocol.FileInfo) {
+	t.mut.Lock()
+	defer t.mut.Unlock()
+	for _, file := range files {
+		s := t.registry[folder][file.Name]
+		if s != nil && s.isClosed() && s.file.Version.Equal(file.Version) {
+			delete(t.registry[folder], file.Name)
+		}
+	}
 }
 
 // BytesCompleted returns the number of bytes completed in the given folder.

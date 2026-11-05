@@ -314,6 +314,12 @@ func (s *sharedPullerState) pullDone(block protocol.BlockInfo) {
 	metricFolderProcessedBytesTotal.WithLabelValues(s.folder, metricSourceNetwork).Add(float64(block.Size))
 }
 
+func (s *sharedPullerState) isClosed() bool {
+	s.mut.RLock()
+	defer s.mut.RUnlock()
+	return s.closed
+}
+
 // finalClose atomically closes and returns closed status of a file. A true
 // first return value means the file was closed and should be finished, with
 // the error indicating the success or failure of the close. A false first
