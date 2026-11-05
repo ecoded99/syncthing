@@ -1911,7 +1911,7 @@ func (m *model) Closed(conn protocol.Connection, err error) {
 	removedIsPrimary := m.promotedConnID[deviceID] == connID
 	remainingConns := without(m.deviceConnIDs[deviceID], connID)
 	var wait <-chan error
-	if removedIsPrimary {
+	if removedIsPrimary || len(remainingConns) == 0 {
 		if len(remainingConns) > 0 {
 			m.progressEmitter.temporaryIndexReplace(conn, m.connections[remainingConns[0]])
 		} else {

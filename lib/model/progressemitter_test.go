@@ -8,6 +8,7 @@ package model
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -537,5 +538,22 @@ func TestProgressConnectionHandoff(t *testing.T) {
 	p.temporaryIndexReplace(first, first)
 	if p.connections[device1].ConnectionID() != second.ConnectionID() {
 		t.Fatal("late close replaced current connection")
+	}
+}
+
+func TestProgressLastSecondaryClose(t *testing.T) {
+	m, conn, fcfg := setupModelWithConnection(t)
+	defer cleanupModelAndRemoveDir(m, fcfg.Filesystem().URI())
+	// The old primary has closed, but the promotion timer hasn't fired yet.
+	m.mut.Lock()
+	m.promotionTimer.Stop()
+	m.promotedConnID[conn.DeviceID()] = "previous-primary"
+	m.progressEmitter.temporaryIndexSubscribe(conn, []string{fcfg.ID})
+	m.mut.Unlock()
+	conn.Close(errors.New("last secondary closed before promotion"))
+	m.progressEmitter.mut.Lock()
+	defer m.progressEmitter.mut.Unlock()
+	if _, ok := m.progressEmitter.connections[conn.DeviceID()]; ok {
+		t.Fatal("last secondary close retained a dead progress subscription")
 	}
 }

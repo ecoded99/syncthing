@@ -64,8 +64,8 @@ it created. Production files and configuration are not opened.
 
 Pass one or more `results.json` paths to `test_gui_stats.cjs` to replay the exact
 ETA calculation against measured completion. Four Windows loopback runs across
-TCP/QUIC and ordinary/bundled transfers produced 40–44 usable remote ETA samples
-per run, with median relative errors of approximately 12–20% against observed
+TCP/QUIC and ordinary/bundled transfers produced 40–58 usable remote ETA samples
+per run, with median relative errors of approximately 10–20% against observed
 completion (remaining intervals below five seconds use a five-second denominator).
 These are capped local measurements, not a prediction of WAN accuracy. GUI checks
 cover startup, counters, stale and stopped work, changing scope, empty files,
