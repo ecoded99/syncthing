@@ -11,6 +11,7 @@ package fs
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"unsafe"
 
@@ -88,12 +89,33 @@ func TestLstatCloudPlaceholder(t *testing.T) {
 
 	fs := newBasicFilesystem(dir)
 	path := filepath.Join(dir, "file")
+	if namep, err := windows.UTF16PtrFromString(path); err == nil {
+		if _, err := queryFileInformationByName(namep); err == nil {
+			fs.fastCloudMetadata = true // Exercise the path even if this test's root is not a placeholder.
+			if fi, err := fs.underlyingLstat(path); err != nil {
+				t.Fatal(err)
+			} else if _, ok := fi.(*namedCloudFileInfo); !ok {
+				t.Fatalf("fast path not used: %T", fi)
+			}
+		}
+	}
 	tag, err := readReparseTag(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if tag&ioReparseTagCloudMask != ioReparseTagCloud {
 		t.Fatalf("not a Cloud Files placeholder: tag 0x%08x", tag)
+	}
+	if namep, err := windows.UTF16PtrFromString(path); err == nil {
+		if fast, err := readReparseTagByName(namep); err == nil {
+			t.Log("fresh by-name metadata available")
+			legacy, err := readReparseTagHandle(namep)
+			if err != nil || fast != legacy {
+				t.Fatalf("tag mismatch: fast=%x handle=%x err=%v", fast, legacy, err)
+			}
+		} else {
+			t.Log("using legacy metadata fallback:", err)
+		}
 	}
 	// Some Go versions already recognize cloud placeholders. Still verify
 	// the real filesystem result, and exercise our fallback explicitly below.
@@ -104,6 +126,13 @@ func TestLstatCloudPlaceholder(t *testing.T) {
 	irregular := irregularCloudInfo{raw}
 	if !isLocalCloudFile(path, irregular) {
 		t.Fatal("fully local cloud placeholder was not recognized")
+	}
+	for _, flag := range []uint32{windows.FILE_ATTRIBUTE_RECALL_ON_OPEN, windows.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS, windows.FILE_ATTRIBUTE_OFFLINE} {
+		attrs := *raw.Sys().(*syscall.Win32FileAttributeData)
+		attrs.FileAttributes |= flag
+		if isLocalCloudFile(path, cloudAttrsInfo{irregular, &attrs}) {
+			t.Fatalf("remote placeholder accepted: flag %x", flag)
+		}
 	}
 	if mode := (&cloudFileInfo{irregular}).Mode(); !mode.IsRegular() {
 		t.Errorf("normalized placeholder mode: %v", mode)
@@ -125,10 +154,80 @@ func TestLstatCloudPlaceholder(t *testing.T) {
 	if data, err := os.ReadFile(path); err != nil || string(data) != "data" {
 		t.Fatalf("placeholder contents: %q, %v", data, err)
 	}
+	for _, name := range []string{"file", "dir"} {
+		p := filepath.Join(dir, name)
+		fast, err := fs.underlyingLstat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacy, err := os.Lstat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fast.Mode() != legacy.Mode()&^os.ModeIrregular || fast.Size() != legacy.Size() || !fast.ModTime().Equal(legacy.ModTime()) || fast.IsDir() != legacy.IsDir() {
+			t.Fatalf("metadata mismatch for %s: fast=%v legacy=%v", name, fast, legacy)
+		}
+		fastAttrs := fast.Sys().(*syscall.Win32FileAttributeData)
+		legacyAttrs := legacy.Sys().(*syscall.Win32FileAttributeData)
+		if *fastAttrs != *legacyAttrs {
+			t.Fatalf("raw attributes mismatch for %s: %+v %+v", name, fastAttrs, legacyAttrs)
+		}
+		one, _ := fs.Lstat(name)
+		two, _ := fs.Lstat(name)
+		if !fs.SameFile(one, two) {
+			t.Fatalf("SameFile failed for %s", name)
+		}
+	}
+	old, _ := fs.Lstat("file")
+	if err := os.Rename(path, filepath.Join(dir, "old")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := fs.Lstat("file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Size() != 11 || fs.SameFile(old, fresh) {
+		t.Fatal("replacement inherited old metadata/identity")
+	}
 }
 
 type irregularCloudInfo struct{ os.FileInfo }
 
 func (fi irregularCloudInfo) Mode() os.FileMode {
 	return fi.FileInfo.Mode() | os.ModeIrregular
+}
+
+type cloudAttrsInfo struct {
+	os.FileInfo
+	attrs *syscall.Win32FileAttributeData
+}
+
+func (fi cloudAttrsInfo) Sys() any { return fi.attrs }
+
+func TestReparseTagByNameAndFallback(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "file"), []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "target"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := createDirJunct(filepath.Join(dir, "target"), filepath.Join(dir, "junction")); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"file", "target", "junction", "missing"} {
+		path := filepath.Join(dir, name)
+		namep, _ := windows.UTF16PtrFromString(path)
+		legacy, legacyErr := readReparseTagHandle(namep)
+		got, err := readReparseTag(path)
+		if (err == nil) != (legacyErr == nil) || got != legacy {
+			t.Fatalf("%s: query=%x/%v handle=%x/%v", name, got, err, legacy, legacyErr)
+		}
+		if fast, err := readReparseTagByName(namep); err == nil && (legacyErr != nil || fast != legacy) {
+			t.Fatalf("%s: fast=%x handle=%x", name, fast, legacy)
+		}
+	}
 }

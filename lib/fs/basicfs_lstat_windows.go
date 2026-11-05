@@ -12,8 +12,10 @@ import (
 	"fmt"
 	"go/version"
 	"os"
+	"path/filepath"
 	"runtime"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -24,6 +26,96 @@ func readReparseTag(path string) (uint32, error) {
 	if err != nil {
 		return 0, fmt.Errorf("syscall.UTF16PtrFromString failed with: %s", err)
 	}
+	if tag, err := readReparseTagByName(namep); err == nil {
+		return tag, nil
+	}
+	return readReparseTagHandle(namep)
+}
+
+var getFileInformationByName = windows.NewLazySystemDLL("kernelbase.dll").NewProc("GetFileInformationByName")
+
+// Windows 11 can query fresh metadata without opening another file handle.
+// Unlike FindFirstFile's directory metadata, this is a file information query.
+// Older Windows/filesystems and every error retain the existing handle path.
+func readReparseTagByName(name *uint16) (uint32, error) {
+	info, err := queryFileInformationByName(name)
+	if err != nil {
+		return 0, err
+	}
+	if info.Attributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+		return 0, nil
+	}
+	return info.Tag, nil
+}
+
+type namedFileInformation struct {
+	FileID, Creation, Access, Write, Change, Allocation, Size     int64
+	Attributes, Tag, Links, DeviceType, Characteristics, Reserved uint32
+	Volume                                                        int64
+	ID128                                                         [16]byte
+}
+
+func queryFileInformationByName(name *uint16) (namedFileInformation, error) {
+	var info namedFileInformation
+	if err := getFileInformationByName.Find(); err != nil {
+		return info, err
+	}
+	// FILE_STAT_BASIC_INFORMATION, FileStatBasicByNameInfo (3).
+	// https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-getfileinformationbyname
+	ok, _, err := getFileInformationByName.Call(uintptr(unsafe.Pointer(name)), 3, uintptr(unsafe.Pointer(&info)), unsafe.Sizeof(info))
+	if ok == 0 {
+		return info, err
+	}
+	return info, nil
+}
+
+const remoteCloudAttributes = windows.FILE_ATTRIBUTE_RECALL_ON_OPEN | windows.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | windows.FILE_ATTRIBUTE_OFFLINE
+
+// A fresh by-name snapshot is sufficient for fully local cloud placeholders.
+// Every other file type retains os.Lstat, including all links and remote data.
+type namedCloudFileInfo struct {
+	path string
+	info namedFileInformation
+}
+
+func (f *namedCloudFileInfo) sameFile(other os.FileInfo) (bool, bool) {
+	otherNamed, ok := other.(*namedCloudFileInfo)
+	if !ok {
+		return false, false
+	}
+	if f.info.FileID == 0 || otherNamed.info.FileID == 0 {
+		return false, false
+	}
+	return f.info.Volume == otherNamed.info.Volume && f.info.FileID == otherNamed.info.FileID && f.info.ID128 == otherNamed.info.ID128, true
+}
+
+func (f *namedCloudFileInfo) Name() string { return filepath.Base(f.path) }
+func (f *namedCloudFileInfo) Size() int64  { return f.info.Size }
+func (f *namedCloudFileInfo) Mode() os.FileMode {
+	mode := os.FileMode(0o666)
+	if f.info.Attributes&syscall.FILE_ATTRIBUTE_READONLY != 0 {
+		mode = 0o444
+	}
+	if f.IsDir() {
+		mode |= os.ModeDir | 0o111
+	}
+	return mode
+}
+func (f *namedCloudFileInfo) IsDir() bool {
+	return f.info.Attributes&syscall.FILE_ATTRIBUTE_DIRECTORY != 0
+}
+func (f *namedCloudFileInfo) ModTime() time.Time {
+	ft := syscall.Filetime{LowDateTime: uint32(f.info.Write), HighDateTime: uint32(uint64(f.info.Write) >> 32)}
+	return time.Unix(0, ft.Nanoseconds())
+}
+func (f *namedCloudFileInfo) Sys() any {
+	ft := func(v int64) syscall.Filetime {
+		return syscall.Filetime{LowDateTime: uint32(v), HighDateTime: uint32(uint64(v) >> 32)}
+	}
+	return &syscall.Win32FileAttributeData{FileAttributes: f.info.Attributes, CreationTime: ft(f.info.Creation), LastAccessTime: ft(f.info.Access), LastWriteTime: ft(f.info.Write), FileSizeHigh: uint32(uint64(f.info.Size) >> 32), FileSizeLow: uint32(f.info.Size)}
+}
+
+func readReparseTagHandle(namep *uint16) (uint32, error) {
 	attrs := uint32(syscall.FILE_FLAG_BACKUP_SEMANTICS | syscall.FILE_FLAG_OPEN_REPARSE_POINT)
 	h, err := syscall.CreateFile(namep, 0, 0, nil, syscall.OPEN_EXISTING, attrs, 0)
 	if err != nil {
@@ -125,7 +217,25 @@ func init() {
 	}
 }
 
+// This is a capability hint, never cached file metadata. A later root change
+// can only disable the optimization's benefit: every file is still checked.
+func canUseCloudMetadata(root string) bool {
+	name, err := syscall.UTF16PtrFromString(root)
+	if err != nil {
+		return false
+	}
+	info, err := queryFileInformationByName(name)
+	return err == nil && info.Tag&ioReparseTagCloudMask == ioReparseTagCloud && info.Attributes&remoteCloudAttributes == 0
+}
+
 func (f *BasicFilesystem) underlyingLstat(name string) (os.FileInfo, error) {
+	if f.fastCloudMetadata {
+		if namep, err := syscall.UTF16PtrFromString(name); err == nil {
+			if info, err := queryFileInformationByName(namep); err == nil && info.Attributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT != 0 && info.Attributes&remoteCloudAttributes == 0 && info.Tag&ioReparseTagCloudMask == ioReparseTagCloud {
+				return &namedCloudFileInfo{path: name, info: info}, nil
+			}
+		}
+	}
 	fi, err := os.Lstat(name)
 
 	// There are cases where files are tagged as symlink, but they end up being

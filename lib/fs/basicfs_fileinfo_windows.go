@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 var execExts map[string]bool
@@ -61,6 +62,22 @@ func (e basicFileInfo) Group() int {
 // to be passed to os.SameFile.
 func (e *basicFileInfo) osFileInfo() os.FileInfo {
 	fi := e.FileInfo
+	if named, ok := fi.(*namedCloudFileInfo); ok {
+		// SameFile is rare (normalization and junction cycle checks), so only
+		// it pays for an identity handle. Revalidate the snapshot first: a
+		// replacement must never inherit the old file's identity.
+		if namep, err := syscall.UTF16PtrFromString(named.path); err == nil {
+			if now, err := queryFileInformationByName(namep); err == nil && now.FileID == named.info.FileID && now.Volume == named.info.Volume && now.ID128 == named.info.ID128 {
+				if raw, err := os.Lstat(named.path); err == nil {
+					return raw
+				}
+			}
+		}
+		return fi
+	}
+	if cloud, ok := fi.(*cloudFileInfo); ok {
+		return cloud.FileInfo
+	}
 	if fi, ok := fi.(*dirJunctFileInfo); ok {
 		return fi.FileInfo
 	}
