@@ -3706,6 +3706,15 @@ func TestAddFolderCompletion(t *testing.T) {
 	}
 }
 
+func TestFolderCompletionBounds(t *testing.T) {
+	for _, need := range []int64{-10, 0, 50, 100, 200} {
+		comp := newFolderCompletion(db.Counts{Bytes: 100}, db.Counts{Bytes: need}, 0, remoteFolderValid)
+		if comp.CompletionPct < 0 || comp.CompletionPct > 100 {
+			t.Fatalf("invalid percentage with %d bytes needed: %f", need, comp.CompletionPct)
+		}
+	}
+}
+
 func TestScanDeletedROChangedOnSR(t *testing.T) {
 	m, conn, fcfg := setupModelWithConnection(t)
 	ffs := fcfg.Filesystem()
@@ -3872,6 +3881,25 @@ func TestIssue6961(t *testing.T) {
 		t.Error("Expected 0 needed deletes, got", comp.NeedDeletes)
 	} else {
 		t.Log(comp)
+	}
+}
+
+func TestCompletionIncludesLocalActiveProgress(t *testing.T) {
+	m, _, fcfg := setupModelWithConnection(t)
+	defer cleanupModelAndRemoveDir(m, fcfg.Filesystem().URI())
+	file := protocol.FileInfo{Name: "active", Size: 2 * protocol.MinBlockSize,
+		RawBlockSize: protocol.MinBlockSize, Blocks: []protocol.BlockInfo{{Size: protocol.MinBlockSize}, {Size: protocol.MinBlockSize}},
+		Version: protocol.Vector{}.Update(device1.Short()), Sequence: 1}
+	must(t, m.sdb.Update(fcfg.ID, device1, []protocol.FileInfo{file}))
+	puller := &sharedPullerState{folder: fcfg.ID, file: file, pullTotal: 2, pullNeeded: 1}
+	m.progressEmitter.Register(puller)
+	defer m.progressEmitter.Deregister(puller)
+	comp := m.testCompletion(protocol.LocalDeviceID, fcfg.ID)
+	if comp.NeedBytes != protocol.MinBlockSize || comp.CompletionPct != 50 {
+		t.Fatalf("active local progress missing: %+v", comp)
+	}
+	if comp.UpdatedAt.IsZero() {
+		t.Fatal("missing snapshot timestamp")
 	}
 }
 

@@ -70,8 +70,9 @@ func (c *folderSummaryService) String() string {
 // FolderSummary replaces the previously used map[string]interface{}, and needs
 // to keep the structure/naming for api backwards compatibility
 type FolderSummary struct {
-	Errors     int `json:"errors"`
-	PullErrors int `json:"pullErrors"` // deprecated
+	UpdatedAt  time.Time `json:"updatedAt"`
+	Errors     int       `json:"errors"`
+	PullErrors int       `json:"pullErrors"` // deprecated
 
 	Invalid string `json:"invalid"` // deprecated
 
@@ -119,7 +120,7 @@ type FolderSummary struct {
 }
 
 func (c *folderSummaryService) Summary(folder string) (*FolderSummary, error) {
-	res := new(FolderSummary)
+	res := &FolderSummary{UpdatedAt: time.Now()}
 
 	var local, global, need, ro db.Counts
 	var ourSeq int64

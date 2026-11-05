@@ -121,11 +121,15 @@ func (t *deviceDownloadState) Update(folder string, updates []protocol.FileDownl
 	t.mut.RUnlock()
 
 	if !ok {
-		f = &deviceFolderDownloadState{
-			files: make(map[string]deviceFolderFileDownloadState),
-		}
 		t.mut.Lock()
-		t.folders[folder] = f
+		// Index reception and progress reception can create this folder
+		// concurrently. Recheck under the write lock rather than replacing a
+		// state another callback has already populated.
+		f, ok = t.folders[folder]
+		if !ok {
+			f = &deviceFolderDownloadState{files: make(map[string]deviceFolderFileDownloadState)}
+			t.folders[folder] = f
+		}
 		t.mut.Unlock()
 	}
 

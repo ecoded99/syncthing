@@ -401,7 +401,7 @@
                     <div class="panel-status pull-right text-{{folderClass(folder)}}" ng-switch="folderStatus(folder)">
                       <span class="hidden-xs">{{folderStatusText(folder)}}</span>
                       <span ng-switch-when="scanning" ng-if="scanPercentage(folder.id) != undefined">({{scanPercentage(folder.id) | percent}})</span>
-                      <span ng-switch-when="syncing">({{syncPercentage(folder.id) | percent}}, {{model[folder.id].needBytes | binary}}B)</span>
+                      <span ng-switch-when="syncing" ng-if="model[folder.id].needBytes > 0 && syncPercentage(folder.id) !== undefined">({{syncPercentage(folder.id) | percent}}, {{model[folder.id].needBytes | binary}}B)</span>
                       <span class="inline-icon">
                         <span class="visible-xs fa fa-fw {{folderStatusIcon(folder)}}" aria-label="{{folderStatusText(folder)}}"></span>
                       </span>
@@ -473,6 +473,23 @@
                           <td class="text-right">
                             <a href="" ng-click="showNeed(folder.id)">{{model[folder.id].needTotalItems | alwaysNumber | localeNumber}} <span translate>items</span>, ~{{model[folder.id].needBytes | binary}}B</a>
                           </td>
+                        </tr>
+                        <tr ng-if="!folder.paused && model[folder.id].needTotalItems > 0">
+                          <th><span translate>Sync Activity</span></th>
+                          <td class="text-right">{{syncActivityText(folder.id)}}</td>
+                        </tr>
+                        <tr ng-if="!folder.paused && syncActivity(folder.id).seconds">
+                          <th>
+                            <span ng-if="syncActivity(folder.id).basis === 'bytes'" translate>Estimated Data Time</span>
+                            <span ng-if="syncActivity(folder.id).basis === 'items'" translate>Estimated Time to Apply Changes</span>
+                          </th>
+                          <td class="text-right" title="Based on recent progress for this folder, including reused data. This is an estimate; final file operations may take longer.">
+                            ~{{syncActivity(folder.id).seconds | duration}}
+                          </td>
+                        </tr>
+                        <tr ng-if="!folder.paused && syncActivity(folder.id).bytesPerSecond > 0">
+                          <th><span translate>Folder Progress Rate</span></th>
+                          <td class="text-right" title="Logical bytes completed in this folder, including locally reused data. This differs from network traffic.">{{syncActivity(folder.id).bytesPerSecond | binary}}B/s</td>
                         </tr>
                         <tr ng-if="folderStatus(folder) === 'scanning' && scanProgress[folder.id].scope">
                           <th><span translate>Scan Scope</span></th>
@@ -851,7 +868,7 @@
                       <identicon class="panel-icon" data-value="deviceCfg.deviceID"></identicon>
                       <div class="panel-status pull-right text-{{deviceClass(deviceCfg)}}" ng-switch="deviceStatus(deviceCfg)">
                         <span class="hidden-xs">{{deviceStatusText(deviceCfg)}}</span>
-                        <span ng-switch-when="syncing">({{completion[deviceCfg.deviceID]._total | percent}}, {{completion[deviceCfg.deviceID]._needBytes | binary}}B)</span>
+                        <span ng-switch-when="syncing" ng-if="completion[deviceCfg.deviceID]._needBytes > 0">({{completion[deviceCfg.deviceID]._total | percent}}, {{completion[deviceCfg.deviceID]._needBytes | binary}}B)</span>
                         <span class="inline-icon">
                           <span class="visible-xs fa fa-fw {{deviceStatusIcon(deviceCfg)}}" aria-label="{{deviceStatusText(deviceCfg)}}"></span>
                         </span>
@@ -890,9 +907,12 @@
                           </tr>
                           <tr ng-if="!connections[deviceCfg.deviceID].connected && deviceFolders(deviceCfg).length > 0">
                             <th><span class="fas fa-fw fa-cloud"></span>&nbsp;<span translate>Sync Status</span></th>
-                            <td translate ng-if="completion[deviceCfg.deviceID]._total == 100" class="text-right">Up to Date</td>
-                            <td ng-if="completion[deviceCfg.deviceID]._total < 100" class="text-right">
-                                <span class="hidden-xs" translate>Out of Sync</span> ({{completion[deviceCfg.deviceID]._total | percent}})
+                            <td translate ng-if="completion[deviceCfg.deviceID]._total === 100 && completion[deviceCfg.deviceID]._needBytes === 0 && completion[deviceCfg.deviceID]._needItems === 0" class="text-right">Last Known: Up to Date</td>
+                            <td ng-if="completion[deviceCfg.deviceID]._needBytes > 0 || completion[deviceCfg.deviceID]._needItems > 0" class="text-right">
+                                <span translate>Last Known: Out of Sync</span>
+                            </td>
+                            <td ng-if="completion[deviceCfg.deviceID]._total === undefined && !(completion[deviceCfg.deviceID]._needBytes > 0 || completion[deviceCfg.deviceID]._needItems > 0)" class="text-right" translate>
+                                Status Unavailable
                             </td>
                           </tr>
                           <tr ng-if="connections[deviceCfg.deviceID].connected">
@@ -1022,6 +1042,21 @@
                               --><span ng-if="!$last">,</span>
                                 </span>
                               </span>
+                            </td>
+                          </tr>
+                          <tr ng-repeat="folderID in deviceFolders(deviceCfg)" ng-if="connections[deviceCfg.deviceID].connected">
+                            <th class="overflow-break-word">{{folderLabel(folderID)}}<br><small translate>Remote Progress</small></th>
+                            <td class="text-right">
+                              <div>{{syncActivityText(folderID, deviceCfg.deviceID)}}</div>
+                              <div ng-if="syncActivity(folderID, deviceCfg.deviceID).phase === 'receiving' && remoteDataPercentage(deviceCfg.deviceID, folderID) !== undefined">
+                                {{remoteDataPercentage(deviceCfg.deviceID, folderID) | percent}} <span translate>of data</span>
+                              </div>
+                              <div ng-if="completion[deviceCfg.deviceID][folderID].needItems + completion[deviceCfg.deviceID][folderID].needDeletes > 0">
+                                {{completion[deviceCfg.deviceID][folderID].needItems + completion[deviceCfg.deviceID][folderID].needDeletes | localeNumber}} <span translate>items remaining</span>
+                              </div>
+                              <div ng-if="syncActivity(folderID, deviceCfg.deviceID).seconds" title="Estimated from this folder's recent reported progress. File finalization and index updates may take longer.">
+                                <span ng-if="syncActivity(folderID, deviceCfg.deviceID).basis === 'bytes'" translate>Data remaining</span><span ng-if="syncActivity(folderID, deviceCfg.deviceID).basis === 'items'" translate>Applying changes</span>: ~{{syncActivity(folderID, deviceCfg.deviceID).seconds | duration}}
+                              </div>
                             </td>
                           </tr>
                           <tr ng-if="linkSpeedTests[deviceCfg.deviceID]">

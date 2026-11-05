@@ -453,5 +453,8 @@ func blocksToSize(blocks, blocksInFile, blockSize int, fileSize int64) int64 {
 	if blocksInFile == 0 {
 		return 0
 	}
-	return int64(blocks)*int64(blockSize) - (int64(blockSize)-fileSize%int64(blockSize))*int64(blocks)/int64(blocksInFile)
+	// An aligned file has a full final block, not a zero-length final block.
+	// Only discount the unused tail of a genuinely short last block.
+	unusedTail := (int64(blockSize) - fileSize%int64(blockSize)) % int64(blockSize)
+	return int64(blocks)*int64(blockSize) - unusedTail*int64(blocks)/int64(blocksInFile)
 }
