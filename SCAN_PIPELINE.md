@@ -152,16 +152,17 @@ other disks; the benchmark alternates run order across trials for comparison.
 
 ## Large-folder metadata checks
 
-Scanner discovery uses four concurrent fresh Lstat reads per batch, with serial
+On detected Windows cloud roots, scanner discovery uses four concurrent fresh
+Lstat reads per batch, with serial
 callbacks and directory traversal. After descending into a directory, remaining
 sibling metadata is refreshed before use. No metadata survives a scan and no
-directory listing replaces a fresh file check. Ordinary filesystem Walk callers
-retain their original serial traversal.
+directory listing replaces a fresh file check. Ordinary folders and filesystem
+Walk callers retain their original serial traversal.
 
 On supported Windows versions, fully local Cloud Files placeholders use one
 fresh GetFileInformationByName snapshot for metadata and reparse classification.
-This avoids the metadata and classification handle opens. A cheap attribute
-hint selects candidates but never supplies scan metadata. Ordinary files,
+This avoids the metadata and classification handle opens. A root capability
+probe selects the optimization; it never supplies file metadata. Ordinary roots,
 links, unknown reparse types, missing APIs, unsupported filesystems and query
 errors use the prior os.Lstat path. Offline and recall-on-access placeholders
 remain excluded from hashing. SameFile preserves snapshot IDs and obtains a

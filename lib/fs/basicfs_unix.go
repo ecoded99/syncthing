@@ -18,6 +18,8 @@ import (
 
 const optNoFollow = syscall.O_NOFOLLOW
 
+func canUseCloudMetadata(string) bool { return false }
+
 func (f *BasicFilesystem) CreateSymlink(target, name string) error {
 	name, err := f.rooted(name)
 	if err != nil {

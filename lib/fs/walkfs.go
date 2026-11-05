@@ -192,6 +192,14 @@ func (f *walkFilesystem) Walk(root string, walkFn WalkFunc) error {
 // serial behavior. Filesystems without our walk wrapper use their own Walk.
 func WalkWithLstatWorkers(filesystem Filesystem, root string, walkFn WalkFunc, workers int) error {
 	if walker, ok := unwrapFilesystem[*walkFilesystem](filesystem); ok {
+		if workers == 0 {
+			// Parallel reads pay off on cloud-backed Windows metadata. Tiny
+			// local stat calls otherwise cost more CPU to dispatch than to run.
+			workers = 1
+			if basic, ok := unwrapFilesystem[*BasicFilesystem](filesystem); ok && basic.fastCloudMetadata {
+				workers = 4
+			}
+		}
 		return walker.walkWithWorkers(root, walkFn, max(1, min(workers, 4, runtime.GOMAXPROCS(0))))
 	}
 	return filesystem.Walk(root, walkFn)

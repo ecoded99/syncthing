@@ -89,6 +89,16 @@ func TestLstatCloudPlaceholder(t *testing.T) {
 
 	fs := newBasicFilesystem(dir)
 	path := filepath.Join(dir, "file")
+	if namep, err := windows.UTF16PtrFromString(path); err == nil {
+		if _, err := queryFileInformationByName(namep); err == nil {
+			fs.fastCloudMetadata = true // Exercise the path even if this test's root is not a placeholder.
+			if fi, err := fs.underlyingLstat(path); err != nil {
+				t.Fatal(err)
+			} else if _, ok := fi.(*namedCloudFileInfo); !ok {
+				t.Fatalf("fast path not used: %T", fi)
+			}
+		}
+	}
 	tag, err := readReparseTag(path)
 	if err != nil {
 		t.Fatal(err)

@@ -16,7 +16,7 @@ func BenchmarkExistingMetadata(b *testing.B) {
 	if path == "" {
 		b.Skip("set STSCANMETADATA to an existing absolute file/directory path")
 	}
-	filesystem := newBasicFilesystem(".")
+	filesystem := newBasicFilesystem(path)
 	namep, _ := syscall.UTF16PtrFromString(path)
 	info, queryErr := queryFileInformationByName(namep)
 	fi, statErr := filesystem.underlyingLstat(path)

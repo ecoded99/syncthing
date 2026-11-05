@@ -217,15 +217,22 @@ func init() {
 	}
 }
 
+// This is a capability hint, never cached file metadata. A later root change
+// can only disable the optimization's benefit: every file is still checked.
+func canUseCloudMetadata(root string) bool {
+	name, err := syscall.UTF16PtrFromString(root)
+	if err != nil {
+		return false
+	}
+	info, err := queryFileInformationByName(name)
+	return err == nil && info.Tag&ioReparseTagCloudMask == ioReparseTagCloud && info.Attributes&remoteCloudAttributes == 0
+}
+
 func (f *BasicFilesystem) underlyingLstat(name string) (os.FileInfo, error) {
-	if getFileInformationByName.Find() == nil {
+	if f.fastCloudMetadata {
 		if namep, err := syscall.UTF16PtrFromString(name); err == nil {
-			// A cheap hint keeps ordinary files on their existing path. It is
-			// never used as metadata: either the fresh query or os.Lstat follows.
-			if attrs, err := syscall.GetFileAttributes(namep); err == nil && attrs&syscall.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-				if info, err := queryFileInformationByName(namep); err == nil && info.Attributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT != 0 && info.Attributes&remoteCloudAttributes == 0 && info.Tag&ioReparseTagCloudMask == ioReparseTagCloud {
-					return &namedCloudFileInfo{path: name, info: info}, nil
-				}
+			if info, err := queryFileInformationByName(namep); err == nil && info.Attributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT != 0 && info.Attributes&remoteCloudAttributes == 0 && info.Tag&ioReparseTagCloudMask == ioReparseTagCloud {
+				return &namedCloudFileInfo{path: name, info: info}, nil
 			}
 		}
 	}

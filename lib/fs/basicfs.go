@@ -47,11 +47,12 @@ func (*OptionJunctionsAsDirs) String() string {
 // The BasicFilesystem implements all aspects by delegating to package os.
 // All paths are relative to the root and cannot (should not) escape the root directory.
 type BasicFilesystem struct {
-	root            string
-	junctionsAsDirs bool
-	options         []Option
-	userCache       *userCache
-	groupCache      *groupCache
+	root              string
+	junctionsAsDirs   bool
+	options           []Option
+	userCache         *userCache
+	groupCache        *groupCache
+	fastCloudMetadata bool
 }
 
 type (
@@ -106,6 +107,7 @@ func newBasicFilesystem(root string, opts ...Option) *BasicFilesystem {
 		userCache:  newValueCache(time.Hour, user.LookupId),
 		groupCache: newValueCache(time.Hour, user.LookupGroupId),
 	}
+	fs.fastCloudMetadata = canUseCloudMetadata(root)
 	for _, opt := range opts {
 		opt.apply(fs)
 	}
