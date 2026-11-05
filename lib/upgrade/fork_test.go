@@ -24,7 +24,7 @@ func TestForkSignedArchive(t *testing.T) {
 	previous := SigningKey
 	SigningKey = public
 	t.Cleanup(func() { SigningKey = previous })
-	for _, platform := range []string{"windows-amd64", "macos-arm64", "macos-amd64"} {
+	for _, platform := range []string{"windows-amd64", "macos-arm64", "macos-amd64", "linux-amd64"} {
 		t.Run(platform, func(t *testing.T) {
 			testForkSignedArchive(t, private, platform)
 		})
@@ -90,7 +90,7 @@ func testForkSignedArchive(t *testing.T, private []byte, platform string) {
 	}
 	for _, renamed := range []string{
 		strings.Replace(name, "ecoded.1", "ecoded.2", 1),
-		strings.Replace(name, platform, "linux-amd64", 1),
+		strings.Replace(name, platform, "other-amd64", 1),
 	} {
 		if _, err := readZip(renamed, dir, bytes.NewReader(archive(binary))); err == nil {
 			t.Fatalf("renamed release accepted: %s", renamed)
