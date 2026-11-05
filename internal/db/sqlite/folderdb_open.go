@@ -7,7 +7,10 @@
 package sqlite
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/syncthing/syncthing/lib/protocol"
@@ -20,6 +23,9 @@ type folderDB struct {
 
 	localDeviceIdx  int64
 	deleteRetention time.Duration
+
+	// False is conservative: query SQLite unless the table was proven empty.
+	mtimesAbsent atomic.Bool
 }
 
 func openFolderDB(folder, path string, deleteRetention time.Duration) (*folderDB, error) {
@@ -56,6 +62,12 @@ func openFolderDB(folder, path string, deleteRetention time.Duration) (*folderDB
 	fdb.localDeviceIdx, _ = fdb.deviceIdxLocked(protocol.LocalDeviceID)
 	fdb.tplInput["LocalDeviceIdx"] = fdb.localDeviceIdx
 
+	// Most filesystems preserve mtimes without overrides. Avoid one empty SQL
+	// lookup per stat until the first override is written. Errors disable the
+	// shortcut rather than hiding potentially persisted timestamps.
+	var present int
+	err = fdb.stmt(`SELECT 1 FROM mtimes LIMIT 1`).Get(&present)
+	fdb.mtimesAbsent.Store(errors.Is(err, sql.ErrNoRows))
 	return fdb, nil
 }
 

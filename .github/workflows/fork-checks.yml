@@ -48,11 +48,19 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node script/test_gui_stats.cjs "${{ runner.temp }}/sync-status-quic/results.json" "${{ runner.temp }}/sync-status-tcp/results.json"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - if: runner.os == 'Windows'
+        name: Verify reliable full scans on the native executable
+        shell: pwsh
+        run: |
+          python script/benchmark_scans.py --binary syncthing.exe --baseline-binary syncthing.exe --work "${{ runner.temp }}/scan-reliability" --files 512 --trials 1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - if: always() && runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: bundle-recovery-windows
           path: |
+            ${{ runner.temp }}/scan-reliability/results.json
+            ${{ runner.temp }}/scan-reliability/**/console.log
             ${{ runner.temp }}/bundle-recovery/results.json
             ${{ runner.temp }}/bundle-recovery/**/console.log
             ${{ runner.temp }}/sync-status-*/results.json
@@ -60,9 +68,11 @@ jobs:
             ${{ runner.temp }}/sync-status-*/**/console.log
           if-no-files-found: ignore
       - if: runner.os != 'Windows'
+        run: go test -race ./internal/db/sqlite -run 'TestMtime' -count=1
+      - if: runner.os != 'Windows'
         run: go test -race ./lib/cloudbackup ./lib/scanner ./lib/protocol
       - if: runner.os != 'Windows'
-        run: go test -race ./lib/model -run 'Test.*Bundle|Test.*Progress|Test.*Completion|Test.*DeviceDownloadState|TestBlocksToSize|TestRequestTemporaryAfterPromotion' -count=1
+        run: go test -race ./lib/model -run 'Test.*Bundle|Test.*Progress|Test.*Completion|Test.*DeviceDownloadState|TestBlocksToSize|TestRequestTemporaryAfterPromotion|TestScanDeletion' -count=1
       - if: runner.os == 'Linux'
         run: go test ./lib/protocol -run '^$' -fuzz '^FuzzBatchRequestDecoder$' -fuzztime 10s
       - if: runner.os == 'Linux'

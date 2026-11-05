@@ -11,6 +11,9 @@ import (
 )
 
 func (s *folderDB) GetMtime(name string) (ondisk, virtual time.Time) {
+	if s.mtimesAbsent.Load() {
+		return time.Time{}, time.Time{}
+	}
 	var res struct {
 		Ondisk  int64
 		Virtual int64
@@ -27,6 +30,9 @@ func (s *folderDB) GetMtime(name string) (ondisk, virtual time.Time) {
 func (s *folderDB) PutMtime(name string, ondisk, virtual time.Time) error {
 	s.updateLock.Lock()
 	defer s.updateLock.Unlock()
+	// Invalidate before committing: reads after this write completes must see
+	// the override. Failed writes merely leave the conservative SQL path on.
+	s.mtimesAbsent.Store(false)
 	_, err := s.stmt(`
 		INSERT OR REPLACE INTO mtimes (name, ondisk, virtual)
 		VALUES (?, ?, ?)

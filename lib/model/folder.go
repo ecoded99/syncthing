@@ -777,14 +777,15 @@ func (f *folder) scanSubdirsDeletedAndIgnored(ctx context.Context, subDirs []str
 	var toIgnore []protocol.FileInfo
 	ignoredParent := ""
 	changes := 0
-	deleted := osutil.NewDeletedChecker(f.mtimefs)
 
 outer:
 	for _, sub := range subDirs {
-		for fi, err := range itererr.Zip(f.db.AllLocalFilesWithPrefix(f.folderID, protocol.LocalDeviceID, sub)) {
+		files, errFn := f.db.AllLocalFilesWithPrefix(f.folderID, protocol.LocalDeviceID, sub)
+		for result, err := range scanDeletionChecks(ctx, files, errFn, f.mtimefs, f.ignores, 4) {
 			if err != nil {
 				return changes, err
 			}
+			fi := result.file
 			checked++
 			if batch.progress != nil && checked%256 == 0 {
 				batch.progress.deletionProgress(checked, false)
@@ -818,7 +819,7 @@ outer:
 				ignoredParent = ""
 			}
 
-			switch ignored := f.ignores.Match(fi.Name).IsIgnored(); {
+			switch ignored := result.ignored; {
 			case fi.IsIgnored() && ignored:
 				continue
 			case !fi.IsIgnored() && ignored:
@@ -852,7 +853,7 @@ outer:
 				// it's still here. Simply stat:ing it won't do as there are
 				// tons of corner cases (e.g. parent dir->symlink, missing
 				// permissions)
-				if !deleted.IsDeleted(fi.Name) {
+				if !result.deleted {
 					if ignoredParent != "" {
 						// Don't ignore parents of this not ignored item
 						toIgnore = toIgnore[:0]
