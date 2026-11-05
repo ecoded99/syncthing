@@ -42,6 +42,9 @@ of remote per-folder progress without losing updates. Completed pullers remain
 accounted for until their database batch commits; incoming peer indexes likewise
 retain temporary progress until committed. Requests for recently promoted
 temporary files can fall back to the final regular file with hash validation.
+When a primary connection closes while other streams remain, progress
+subscriptions move to the replacement stream and resend the complete block
+state, including a reset to avoid double-counting.
 
 ## Local validation
 
@@ -61,8 +64,8 @@ it created. Production files and configuration are not opened.
 
 Pass one or more `results.json` paths to `test_gui_stats.cjs` to replay the exact
 ETA calculation against measured completion. Four Windows loopback runs across
-TCP/QUIC and ordinary/bundled transfers produced 42–44 usable remote ETA samples
-per run, with median relative errors of approximately 15–19% against observed
+TCP/QUIC and ordinary/bundled transfers produced 40–44 usable remote ETA samples
+per run, with median relative errors of approximately 12–20% against observed
 completion (remaining intervals below five seconds use a five-second denominator).
 These are capped local measurements, not a prediction of WAN accuracy. GUI checks
 cover startup, counters, stale and stopped work, changing scope, empty files,

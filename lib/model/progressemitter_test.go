@@ -500,3 +500,42 @@ func TestProgressFinalizationHandoff(t *testing.T) {
 		t.Fatal("failed puller retained")
 	}
 }
+
+func TestProgressConnectionHandoff(t *testing.T) {
+	first := newFakeConnection(device1, nil)
+	second := newFakeConnection(device1, nil)
+	p := &ProgressEmitter{
+		registry: make(map[string]map[string]*sharedPullerState), timer: time.NewTimer(time.Hour),
+		connections:        make(map[protocol.DeviceID]protocol.Connection),
+		foldersByConns:     make(map[protocol.DeviceID][]string),
+		sentDownloadStates: make(map[protocol.DeviceID]*sentDownloadState),
+	}
+	defer p.timer.Stop()
+	state := &sharedPullerState{folder: "folder", created: time.Now(), available: []int{0, 1},
+		file: protocol.FileInfo{Name: "active", Blocks: make([]protocol.BlockInfo, 4), Version: protocol.Vector{}.Update(1)}}
+	p.Register(state)
+	p.temporaryIndexSubscribe(first, []string{"folder"})
+	sendMsgs(p)
+	if len(first.downloadProgressMessages) != 1 {
+		t.Fatal("missing initial progress")
+	}
+	// Simulate an update that was tracked for sending but lost on the old link.
+	state.available = append(state.available, 2)
+	state.availableUpdated = time.Now()
+	sendMsgs(p)
+	p.temporaryIndexReplace(first, second)
+	sendMsgs(p)
+	if len(second.downloadProgressMessages) != 1 {
+		t.Fatal("progress subscription lost after promotion")
+	}
+	updates := second.downloadProgressMessages[0].updates
+	if len(updates) != 2 || updates[0].UpdateType != protocol.FileDownloadProgressUpdateTypeForget ||
+		updates[1].UpdateType != protocol.FileDownloadProgressUpdateTypeAppend || len(updates[1].BlockIndexes) != 3 {
+		t.Fatalf("handoff must replace previously sent state with all available blocks: %v", updates)
+	}
+	// A late close on an older connection must not replace the current link.
+	p.temporaryIndexReplace(first, first)
+	if p.connections[device1].ConnectionID() != second.ConnectionID() {
+		t.Fatal("late close replaced current connection")
+	}
+}

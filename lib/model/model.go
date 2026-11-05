@@ -1912,7 +1912,11 @@ func (m *model) Closed(conn protocol.Connection, err error) {
 	remainingConns := without(m.deviceConnIDs[deviceID], connID)
 	var wait <-chan error
 	if removedIsPrimary {
-		m.progressEmitter.temporaryIndexUnsubscribe(conn)
+		if len(remainingConns) > 0 {
+			m.progressEmitter.temporaryIndexReplace(conn, m.connections[remainingConns[0]])
+		} else {
+			m.progressEmitter.temporaryIndexUnsubscribe(conn)
+		}
 		if idxh, ok := m.indexHandlers.Get(deviceID); ok && idxh.conn.ConnectionID() == connID {
 			wait = m.indexHandlers.RemoveAndWaitChan(deviceID, 0)
 		}
