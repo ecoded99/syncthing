@@ -324,6 +324,13 @@ func (*BasicFilesystem) SameFile(fi1, fi2 FileInfo) bool {
 	if !ok1 || !ok2 {
 		return false
 	}
+	if named, ok := f1.FileInfo.(interface {
+		sameFile(os.FileInfo) (bool, bool)
+	}); ok {
+		if same, known := named.sameFile(f2.FileInfo); known {
+			return same
+		}
+	}
 
 	return os.SameFile(f1.osFileInfo(), f2.osFileInfo())
 }

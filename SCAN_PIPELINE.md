@@ -158,11 +158,14 @@ sibling metadata is refreshed before use. No metadata survives a scan and no
 directory listing replaces a fresh file check. Ordinary filesystem Walk callers
 retain their original serial traversal.
 
-On supported Windows versions, reparse-tag classification uses the fresh
-GetFileInformationByName query rather than opening another file handle after
-os.Lstat. Missing APIs, unsupported filesystems and query errors use the prior
-handle-based check. Fully local Cloud Files placeholders remain regular;
-offline and recall-on-access placeholders remain excluded from hashing.
+On supported Windows versions, fully local Cloud Files placeholders use one
+fresh GetFileInformationByName snapshot for metadata and reparse classification.
+This avoids the metadata and classification handle opens. A cheap attribute
+hint selects candidates but never supplies scan metadata. Ordinary files,
+links, unknown reparse types, missing APIs, unsupported filesystems and query
+errors use the prior os.Lstat path. Offline and recall-on-access placeholders
+remain excluded from hashing. SameFile preserves snapshot IDs and obtains a
+handle only when a mixed representation requires one.
 
 The opt-in BenchmarkExistingFolderScan measures discovery and deletion checks
 against an independent SQLite backup and the real folder. It starts no peers,

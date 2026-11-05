@@ -144,6 +144,44 @@ func TestLstatCloudPlaceholder(t *testing.T) {
 	if data, err := os.ReadFile(path); err != nil || string(data) != "data" {
 		t.Fatalf("placeholder contents: %q, %v", data, err)
 	}
+	for _, name := range []string{"file", "dir"} {
+		p := filepath.Join(dir, name)
+		fast, err := fs.underlyingLstat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacy, err := os.Lstat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fast.Mode() != legacy.Mode()&^os.ModeIrregular || fast.Size() != legacy.Size() || !fast.ModTime().Equal(legacy.ModTime()) || fast.IsDir() != legacy.IsDir() {
+			t.Fatalf("metadata mismatch for %s: fast=%v legacy=%v", name, fast, legacy)
+		}
+		fastAttrs := fast.Sys().(*syscall.Win32FileAttributeData)
+		legacyAttrs := legacy.Sys().(*syscall.Win32FileAttributeData)
+		if *fastAttrs != *legacyAttrs {
+			t.Fatalf("raw attributes mismatch for %s: %+v %+v", name, fastAttrs, legacyAttrs)
+		}
+		one, _ := fs.Lstat(name)
+		two, _ := fs.Lstat(name)
+		if !fs.SameFile(one, two) {
+			t.Fatalf("SameFile failed for %s", name)
+		}
+	}
+	old, _ := fs.Lstat("file")
+	if err := os.Rename(path, filepath.Join(dir, "old")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := fs.Lstat("file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Size() != 11 || fs.SameFile(old, fresh) {
+		t.Fatal("replacement inherited old metadata/identity")
+	}
 }
 
 type irregularCloudInfo struct{ os.FileInfo }
