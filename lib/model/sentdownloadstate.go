@@ -72,7 +72,7 @@ func (s *sentFolderDownloadState) update(pullers []*sharedPullerState) []protoco
 		}
 
 		// Existing file we've already sent an update for.
-		if pullerBlockIndexesUpdated.Equal(localFile.updated) && pullerVersion.Equal(localFile.version) {
+		if pullerBlockIndexesUpdated.Equal(localFile.updated) && pullerVersion.Equal(localFile.version) && pullerCreated.Equal(localFile.created) {
 			// The file state hasn't changed, go to next.
 			continue
 		}

@@ -7,10 +7,34 @@
 package model
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/syncthing/syncthing/lib/protocol"
 )
+
+func TestDeviceDownloadStateConcurrentFirstUpdate(t *testing.T) {
+	for range 100 {
+		state := newDeviceDownloadState()
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for i := range 16 {
+			wg.Go(func() {
+				<-start
+				state.Update("folder", []protocol.FileDownloadProgressUpdate{{
+					UpdateType: protocol.FileDownloadProgressUpdateTypeAppend,
+					Name:       fmt.Sprint(i), BlockIndexes: []int{0}, BlockSize: protocol.MinBlockSize,
+				}})
+			})
+		}
+		close(start)
+		wg.Wait()
+		if got := state.BytesDownloaded("folder"); got != 16*protocol.MinBlockSize {
+			t.Fatalf("concurrent callbacks lost progress: got %d", got)
+		}
+	}
+}
 
 func TestDeviceDownloadState(t *testing.T) {
 	v1 := (protocol.Vector{}).Update(0)

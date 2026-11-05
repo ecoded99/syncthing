@@ -26,6 +26,7 @@ type ProgressEmitter struct {
 	sentDownloadStates map[protocol.DeviceID]*sentDownloadState // States representing what we've sent to the other peer via DownloadProgress messages.
 	connections        map[protocol.DeviceID]protocol.Connection
 	foldersByConns     map[protocol.DeviceID][]string
+	forceUpdate        bool // Resend progress after a primary connection handoff.
 	disabled           bool
 	evLogger           events.Logger
 	mut                sync.Mutex
@@ -88,7 +89,8 @@ func (t *ProgressEmitter) Serve(ctx context.Context) error {
 				}
 			}
 
-			if !newLastUpdated.Equal(lastUpdate) || newCount != lastCount {
+			if t.forceUpdate || !newLastUpdated.Equal(lastUpdate) || newCount != lastCount {
+				t.forceUpdate = false
 				lastUpdate = newLastUpdated
 				lastCount = newCount
 				t.sendDownloadProgressEventLocked()
@@ -266,7 +268,22 @@ func (t *ProgressEmitter) Deregister(s *sharedPullerState) {
 	}
 
 	l.Debugln("progress emitter: deregistering", s.folder, s.file.Name)
-	delete(t.registry[s.folder], s.file.Name)
+	if t.registry[s.folder][s.file.Name] == s {
+		delete(t.registry[s.folder], s.file.Name)
+	}
+}
+
+// DeregisterFinalized hands completed files off to committed database counts.
+// Keep their downloaded bytes visible while the database batch is pending.
+func (t *ProgressEmitter) DeregisterFinalized(folder string, files []protocol.FileInfo) {
+	t.mut.Lock()
+	defer t.mut.Unlock()
+	for _, file := range files {
+		s := t.registry[folder][file.Name]
+		if s != nil && s.isClosed() && s.file.Version.Equal(file.Version) {
+			delete(t.registry[folder], file.Name)
+		}
+	}
 }
 
 // BytesCompleted returns the number of bytes completed in the given folder.
@@ -312,6 +329,29 @@ func (t *ProgressEmitter) temporaryIndexSubscribe(conn protocol.Connection, fold
 	defer t.mut.Unlock()
 	t.connections[conn.DeviceID()] = conn
 	t.foldersByConns[conn.DeviceID()] = folders
+}
+
+// temporaryIndexReplace preserves subscriptions when another connection to the
+// same device takes over. Resend complete state after a possibly lost update.
+func (t *ProgressEmitter) temporaryIndexReplace(old, replacement protocol.Connection) {
+	t.mut.Lock()
+	defer t.mut.Unlock()
+	id := old.DeviceID()
+	if current := t.connections[id]; current == nil || current.ConnectionID() != old.ConnectionID() {
+		return
+	}
+	t.connections[id] = replacement
+	if state := t.sentDownloadStates[id]; state != nil {
+		for _, folder := range state.folderStates {
+			for _, file := range folder.files {
+				// update will send Forget followed by all available blocks, avoiding
+				// duplicate appends on a peer that retained its download state.
+				file.created = time.Time{}
+			}
+		}
+	}
+	t.forceUpdate = true
+	t.timer.Reset(time.Millisecond)
 }
 
 func (t *ProgressEmitter) temporaryIndexUnsubscribe(conn protocol.Connection) {

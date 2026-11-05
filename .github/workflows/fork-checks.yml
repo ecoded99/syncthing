@@ -38,6 +38,16 @@ jobs:
       - if: runner.os == 'Windows'
         name: Bundle interrupted-transfer recovery
         run: python script/smoke_bundle_recovery.py --binary syncthing.exe --work "${{ runner.temp }}/bundle-recovery" --files 2048
+      - if: runner.os == 'Windows'
+        name: Verify sync status and estimate recordings
+        shell: pwsh
+        run: |
+          python script/smoke_sync_status.py --binary syncthing.exe --work "${{ runner.temp }}/sync-status-quic" --transport quic --bundles
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python script/smoke_sync_status.py --binary syncthing.exe --work "${{ runner.temp }}/sync-status-tcp" --transport tcp
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node script/test_gui_stats.cjs "${{ runner.temp }}/sync-status-quic/results.json" "${{ runner.temp }}/sync-status-tcp/results.json"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - if: always() && runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
@@ -45,11 +55,14 @@ jobs:
           path: |
             ${{ runner.temp }}/bundle-recovery/results.json
             ${{ runner.temp }}/bundle-recovery/**/console.log
+            ${{ runner.temp }}/sync-status-*/results.json
+            ${{ runner.temp }}/sync-status-*/samples.json
+            ${{ runner.temp }}/sync-status-*/**/console.log
           if-no-files-found: ignore
       - if: runner.os != 'Windows'
         run: go test -race ./lib/cloudbackup ./lib/scanner ./lib/protocol
       - if: runner.os != 'Windows'
-        run: go test -race ./lib/model -run 'Test.*Bundle' -count=1
+        run: go test -race ./lib/model -run 'Test.*Bundle|Test.*Progress|Test.*Completion|Test.*DeviceDownloadState|TestBlocksToSize|TestRequestTemporaryAfterPromotion' -count=1
       - if: runner.os == 'Linux'
         run: go test ./lib/protocol -run '^$' -fuzz '^FuzzBatchRequestDecoder$' -fuzztime 10s
       - if: runner.os == 'Linux'

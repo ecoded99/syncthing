@@ -34,3 +34,24 @@ func TestReadOnlyDir(t *testing.T) {
 	s.fail(nil)
 	s.finalClose()
 }
+
+func TestBlocksToSize(t *testing.T) {
+	for _, test := range []struct {
+		name                     string
+		blocks, total, blockSize int
+		fileSize, want           int64
+	}{
+		{"one full block", 1, 1, 128, 128, 128},
+		{"aligned partial", 1, 2, 128, 256, 128},
+		{"aligned complete", 2, 2, 128, 256, 256},
+		{"short final complete", 2, 2, 128, 200, 200},
+		{"short final estimated partial", 1, 2, 128, 200, 100},
+		{"empty", 0, 0, 128, 0, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := blocksToSize(test.blocks, test.total, test.blockSize, test.fileSize); got != test.want {
+				t.Fatalf("got %d bytes, want %d", got, test.want)
+			}
+		})
+	}
+}

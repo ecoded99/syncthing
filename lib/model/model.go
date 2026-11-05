@@ -814,6 +814,7 @@ func (m *model) FolderStatistics() (map[string]stats.FolderStatistics, error) {
 }
 
 type FolderCompletion struct {
+	UpdatedAt     time.Time
 	CompletionPct float64
 	GlobalBytes   int64
 	NeedBytes     int64
@@ -839,6 +840,9 @@ func newFolderCompletion(global, need db.Counts, sequence int64, state remoteFol
 }
 
 func (comp *FolderCompletion) add(other FolderCompletion) {
+	if comp.UpdatedAt.IsZero() || !other.UpdatedAt.IsZero() && other.UpdatedAt.Before(comp.UpdatedAt) {
+		comp.UpdatedAt = other.UpdatedAt
+	}
 	comp.GlobalBytes += other.GlobalBytes
 	comp.NeedBytes += other.NeedBytes
 	comp.GlobalItems += other.GlobalItems
@@ -852,7 +856,7 @@ func (comp *FolderCompletion) setCompletionPct() {
 		comp.CompletionPct = 100
 	} else {
 		needRatio := float64(comp.NeedBytes) / float64(comp.GlobalBytes)
-		comp.CompletionPct = 100 * (1 - needRatio)
+		comp.CompletionPct = max(0, min(100, 100*(1-needRatio)))
 	}
 
 	// If the completion is 100% but there are deletes we need to handle,
@@ -867,6 +871,7 @@ func (comp *FolderCompletion) setCompletionPct() {
 // Map returns the members as a map, e.g. used in api to serialize as JSON.
 func (comp *FolderCompletion) Map() map[string]any {
 	return map[string]any{
+		"updatedAt":   comp.UpdatedAt,
 		"completion":  comp.CompletionPct,
 		"globalBytes": comp.GlobalBytes,
 		"needBytes":   comp.NeedBytes,
@@ -915,6 +920,7 @@ func (m *model) Completion(device protocol.DeviceID, folder string) (FolderCompl
 }
 
 func (m *model) folderCompletion(device protocol.DeviceID, folder string) (FolderCompletion, error) {
+	started := time.Now()
 	m.mut.RLock()
 	err := m.checkFolderRunningRLocked(folder)
 	m.mut.RUnlock()
@@ -924,19 +930,12 @@ func (m *model) folderCompletion(device protocol.DeviceID, folder string) (Folde
 
 	m.mut.RLock()
 	state := m.remoteFolderStates[device][folder]
-	downloaded := m.deviceDownloads[device].BytesDownloaded(folder)
 	m.mut.RUnlock()
 
 	need, err := m.sdb.CountNeed(folder, device)
 	if err != nil {
 		return FolderCompletion{}, err
 	}
-	need.Bytes -= downloaded
-	// This might be more than it really is, because some blocks can be of a smaller size.
-	if need.Bytes < 0 {
-		need.Bytes = 0
-	}
-
 	seq, err := m.sdb.GetDeviceSequence(folder, device)
 	if err != nil {
 		return FolderCompletion{}, err
@@ -945,7 +944,20 @@ func (m *model) folderCompletion(device protocol.DeviceID, folder string) (Folde
 	if err != nil {
 		return FolderCompletion{}, err
 	}
+	// Sample volatile progress after the database queries, which can take time
+	// on busy folders. Local completion must include the same active pullers as
+	// the folder summary; remote temporary-block reports are only for peers.
+	var downloaded int64
+	if device == protocol.LocalDeviceID {
+		downloaded = m.progressEmitter.BytesCompleted(folder)
+	} else {
+		m.mut.RLock()
+		downloaded = m.deviceDownloads[device].BytesDownloaded(folder)
+		m.mut.RUnlock()
+	}
+	need.Bytes = max(0, need.Bytes-downloaded)
 	comp := newFolderCompletion(glob, need, seq, state)
+	comp.UpdatedAt = started
 
 	l.Debugf("%v Completion(%s, %q): %v", m, device, folder, comp.Map())
 	return comp, nil
@@ -1899,8 +1911,12 @@ func (m *model) Closed(conn protocol.Connection, err error) {
 	removedIsPrimary := m.promotedConnID[deviceID] == connID
 	remainingConns := without(m.deviceConnIDs[deviceID], connID)
 	var wait <-chan error
-	if removedIsPrimary {
-		m.progressEmitter.temporaryIndexUnsubscribe(conn)
+	if removedIsPrimary || len(remainingConns) == 0 {
+		if len(remainingConns) > 0 {
+			m.progressEmitter.temporaryIndexReplace(conn, m.connections[remainingConns[0]])
+		} else {
+			m.progressEmitter.temporaryIndexUnsubscribe(conn)
+		}
 		if idxh, ok := m.indexHandlers.Get(deviceID); ok && idxh.conn.ConnectionID() == connID {
 			wait = m.indexHandlers.RemoveAndWaitChan(deviceID, 0)
 		}
@@ -2053,9 +2069,9 @@ func (m *model) Request(conn protocol.Connection, req *protocol.Request) (out pr
 	if req.FromTemporary {
 		tempFn := fs.TempName(req.Name)
 
-		if info, err := folderFs.Lstat(tempFn); err != nil || !info.IsRegular() {
-			// Reject reads for anything that doesn't exist or is something
-			// other than a regular file.
+		if info, err := folderFs.Lstat(tempFn); !fs.IsNotExist(err) && (err != nil || !info.IsRegular()) {
+			// A missing temporary file may already have been promoted. Reject
+			// other errors and non-regular files, including symlinks.
 			l.Debugf("%v REQ(in) failed stating temp file (%v): %s: %q / %q o=%d s=%d", m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
 			return nil, protocol.ErrNoSuchFile
 		}

@@ -9,6 +9,7 @@ angular.module('syncthing.core')
 
         var prevDate = 0;
         var connectionStatsRequest;
+        var syncProgressTracker = newSyncProgressTracker();
         var navigatingAway = false;
         var online = false;
         var restarting = false;
@@ -307,6 +308,7 @@ angular.module('syncthing.core')
             if ($scope.model[data.folder]) {
                 $scope.model[data.folder].state = data.to;
                 $scope.model[data.folder].error = data.error;
+                $scope.model[data.folder].stateChanged = arg.time;
 
                 // If a folder has started scanning, then any scan progress is
                 // also obsolete.
@@ -336,6 +338,7 @@ angular.module('syncthing.core')
         });
 
         $scope.$on(Events.DEVICE_CONNECTED, function (event, arg) {
+            syncProgressTracker.forgetDevice(arg.data.id);
             if (!$scope.connections[arg.data.id]) {
                 $scope.connections[arg.data.id] = {
                     inbps: 0,
@@ -345,12 +348,9 @@ angular.module('syncthing.core')
                     type: arg.data.type,
                     address: arg.data.addr
                 };
-                $scope.completion[arg.data.id] = {
-                    _total: 100,
-                    _needBytes: 0,
-                    _needItems: 0
-                };
             }
+            $scope.connections[arg.data.id].statusSince = Date.parse(arg.time) || 0;
+            $scope.completion[arg.data.id] = {};
         });
 
         $scope.$on(Events.PENDING_DEVICES_CHANGED, function (event, arg) {
@@ -494,17 +494,12 @@ angular.module('syncthing.core')
 
         $scope.$on(Events.FOLDER_SUMMARY, function (event, arg) {
             var data = arg.data;
-            $scope.model[data.folder] = data.summary;
-            recalcLocalStateTotal();
+            setFolderSummary(data.folder, data.summary);
         });
 
         $scope.$on(Events.FOLDER_COMPLETION, function (event, arg) {
             var data = arg.data;
-            if (!$scope.completion[data.device]) {
-                $scope.completion[data.device] = {};
-            }
-            $scope.completion[data.device][data.folder] = data;
-            recalcCompletion(data.device);
+            setFolderCompletion(data.device, data.folder, data);
         });
 
         $scope.$on(Events.FOLDER_ERRORS, function (event, arg) {
@@ -517,7 +512,7 @@ angular.module('syncthing.core')
 
         $scope.$on(Events.FOLDER_SCAN_PROGRESS, function (event, arg) {
             var data = arg.data;
-            $scope.scanProgress[data.folder] = angular.extend({}, $scope.scanProgress[data.folder], data);
+            $scope.scanProgress[data.folder] = angular.extend({}, $scope.scanProgress[data.folder], data, {_receivedAt: performance.now()});
             console.log("FolderScanProgress", data);
         });
 
@@ -541,8 +536,7 @@ angular.module('syncthing.core')
             if (!debouncedFuncs[key]) {
                 debouncedFuncs[key] = debounce(function () {
                     $http.get(urlbase + '/db/status?folder=' + encodeURIComponent(folder)).success(function (data) {
-                        $scope.model[folder] = data;
-                        recalcLocalStateTotal();
+                        setFolderSummary(folder, data);
                         console.log("refreshFolder", folder, data);
                     }).error($scope.emitHTTPError);
                 }, 1000);
@@ -560,11 +554,7 @@ angular.module('syncthing.core')
 
             $scope.devices = deviceMap($scope.config.devices);
             for (var id in $scope.devices) {
-                $scope.completion[id] = {
-                    _total: 100,
-                    _needBytes: 0,
-                    _needItems: 0
-                };
+                $scope.completion[id] = $scope.completion[id] || {};
 
             };
 
@@ -587,6 +577,7 @@ angular.module('syncthing.core')
             });
 
             $scope.folders = folderMap($scope.config.folders);
+            Object.keys($scope.completion).forEach(recalcCompletion);
             $scope.foldersGrouped = {};
             Object.keys($scope.folders).forEach(function (folder) {
                 refreshFolder(folder);
@@ -752,10 +743,17 @@ angular.module('syncthing.core')
 
         function recalcCompletion(device) {
             var total = 0, needed = 0, deletes = 0, items = 0;
+            var reports = 0;
+            var expected = Object.keys($scope.folders).filter(function (id) {
+                var cfg = $scope.folders[id];
+                return !cfg.paused && cfg.devices.some(function (peer) { return peer.deviceID === device; });
+            }).length;
             for (var folder in $scope.completion[device]) {
-                if (folder === "_total" || folder === '_needBytes' || folder === '_needItems') {
+                if (!$scope.folders[folder] || $scope.folders[folder].paused ||
+                    !$scope.folders[folder].devices.some(function (cfg) { return cfg.deviceID === device; })) {
                     continue;
                 }
+                reports++;
                 total += $scope.completion[device][folder].globalBytes;
                 needed += $scope.completion[device][folder].needBytes;
                 items += $scope.completion[device][folder].needItems;
@@ -763,23 +761,145 @@ angular.module('syncthing.core')
             }
             if (total == 0) {
                 $scope.completion[device]._total = 100;
-                $scope.completion[device]._needBytes = 0;
-                $scope.completion[device]._needItems = 0;
             } else {
-                $scope.completion[device]._total = Math.floor(100 * (1 - needed / total));
-                $scope.completion[device]._needBytes = needed;
-                $scope.completion[device]._needItems = items + deletes;
+                $scope.completion[device]._total = Math.max(0, Math.min(100, Math.floor(100 * (1 - needed / total))));
             }
-
-            if (needed == 0 && deletes + items > 0 ) {
-                // We don't need any data, but we have deletes or
-                // dirs/links/empty files that we need to do. Drop down the
-                // completion percentage to indicate that we have stuff to do.
-                $scope.completion[device]._total = 95;
+            $scope.completion[device]._needBytes = needed;
+            $scope.completion[device]._needItems = items + deletes;
+            if (reports === 0 || reports < expected) {
+                $scope.completion[device]._total = undefined;
+                if (!reports) {
+                    $scope.completion[device]._needBytes = undefined;
+                    $scope.completion[device]._needItems = undefined;
+                }
             }
 
             console.log("recalcCompletion", device, $scope.completion[device]);
         }
+
+        // Measure logical folder progress, never whole-connection traffic:
+        // that includes other folders, protocol overhead and retransmissions.
+        function newSyncProgressTracker() {
+            var states = Object.create(null);
+            return {
+                reset: function () { states = Object.create(null); },
+                forgetDevice: function (device) {
+                    Object.keys(states).forEach(function (key) {
+                        if (JSON.parse(key)[0] === device) { delete states[key]; }
+                    });
+                },
+                update: function (key, data, remote) {
+                    var now = performance.now();
+                    var bytes = Math.max(0, data.needBytes || 0);
+                    var items = Math.max(0, remote ? (data.needItems || 0) + (data.needDeletes || 0) : data.needTotalItems || 0);
+                    var total = Math.max(0, data.globalBytes || 0);
+                    var globalItems = remote ? data.globalItems : data.globalTotalItems;
+                    var previous = states[key];
+                    if (!previous || bytes > previous.bytes || items > previous.items || total !== previous.total ||
+                        globalItems !== previous.globalItems || now - previous.observed > 30000 || previous.complete) {
+                        previous = {samples: [], changed: now};
+                    } else if (bytes < previous.bytes || items < previous.items) {
+                        previous.changed = now;
+                    }
+                    var samples = previous.samples;
+                    samples.push({time: now, bytes: bytes, items: items});
+                    // Prefer recent throughput, retaining three reports when
+                    // the peer reports less often than the five-second window.
+                    while (samples.length > 64 || samples.length > 3 && now - samples[0].time > 5000) {
+                        samples.shift();
+                    }
+                    states[key] = {samples: samples, changed: previous.changed, observed: now,
+                        bytes: bytes, items: items, total: total, globalItems: globalItems,
+                        complete: bytes === 0 && items === 0};
+                },
+                read: function (key) {
+                    var state = states[key];
+                    if (!state) { return {phase: 'checking'}; }
+                    var now = performance.now();
+                    if (state.complete) { return {phase: 'complete'}; }
+                    if (now - state.observed > 20000) { return {phase: 'stale'}; }
+                    if (now - state.changed > 15000) { return {phase: 'waiting'}; }
+                    var first = state.samples[0];
+                    var seconds = (state.observed - first.time) / 1000;
+                    var result = {phase: state.bytes > 0 ? 'receiving' : 'finishing'};
+                    if (seconds >= 4 && state.samples.length >= 3) {
+                        result.bytesPerSecond = Math.max(0, first.bytes - state.bytes) / seconds;
+                        result.itemsPerSecond = Math.max(0, first.items - state.items) / seconds;
+                        var remaining = state.bytes > 0 ? state.bytes : state.items;
+                        var rate = state.bytes > 0 ? result.bytesPerSecond : result.itemsPerSecond;
+                        if (rate > 0) {
+                            // Round up; do not count down without a new report.
+                            var estimate = remaining / rate;
+                            var precision = estimate < 30 ? 1 : estimate < 120 ? 5 : 10;
+                            result.seconds = Math.ceil(estimate / precision) * precision;
+                            result.basis = state.bytes > 0 ? 'bytes' : 'items';
+                        }
+                    }
+                    return result;
+                }
+            };
+        }
+
+        function acceptSyncSnapshot(previous, data) {
+            return !previous || !previous.updatedAt || !data.updatedAt ||
+                Date.parse(data.updatedAt) >= Date.parse(previous.updatedAt);
+        }
+
+        function setFolderSummary(folder, data) {
+            var previous = $scope.model[folder];
+            if (!acceptSyncSnapshot(previous, data)) { return; }
+            if (previous && Date.parse(previous.stateChanged) > Date.parse(data.stateChanged)) {
+                data = angular.extend({}, data, {state: previous.state, stateChanged: previous.stateChanged, error: previous.error});
+            }
+            $scope.model[folder] = data;
+            syncProgressTracker.update(JSON.stringify(['local', folder]), data, false);
+            recalcLocalStateTotal();
+        }
+
+        function setFolderCompletion(device, folder, data) {
+            if (!$scope.completion[device]) { $scope.completion[device] = {}; }
+            var connection = $scope.connections[device];
+            if (connection && Date.parse(data.updatedAt) < connection.statusSince) { return; }
+            if (!acceptSyncSnapshot($scope.completion[device][folder], data)) { return; }
+            $scope.completion[device][folder] = data;
+            syncProgressTracker.update(JSON.stringify([device, folder]), data, true);
+            recalcCompletion(device);
+        }
+
+        $scope.syncActivity = function (folder, device) {
+            var cfg = $scope.folders[folder];
+            if (!cfg || cfg.paused) { return {phase: 'paused'}; }
+            if (device) {
+                if (!$scope.connections[device] || !$scope.connections[device].connected) { return {phase: 'disconnected'}; }
+                var remote = $scope.completion[device] && $scope.completion[device][folder];
+                if (!remote || remote.remoteState === 'unknown') { return {phase: 'checking'}; }
+                if (remote.remoteState === 'paused') { return {phase: 'paused'}; }
+                if (remote.remoteState === 'notSharing') { return {phase: 'notSharing'}; }
+            } else {
+                var model = $scope.model[folder];
+                if (!model || !model.state) { return {phase: 'checking'}; }
+                if (model.state !== 'syncing' && model.state !== 'idle') { return {phase: model.state}; }
+                if (model.errors > 0 || model.pullErrors > 0) { return {phase: 'errors'}; }
+                if (model.state === 'idle' && model.needTotalItems > 0) { return {phase: 'outofsync'}; }
+            }
+            return syncProgressTracker.read(JSON.stringify([device || 'local', folder]));
+        };
+
+        $scope.syncActivityText = function (folder, device) {
+            switch ($scope.syncActivity(folder, device).phase) {
+                case 'complete': return $translate.instant('Up to Date');
+                case 'receiving': return $translate.instant(device ? 'Receiving on Remote Device' : 'Receiving Data');
+                case 'finishing': return $translate.instant('Applying File Changes');
+                case 'waiting': return $translate.instant('Waiting for Progress');
+                case 'stale': return $translate.instant('Waiting for Status Update');
+                case 'paused': return $translate.instant('Paused');
+                case 'disconnected': return $translate.instant('Disconnected');
+                case 'notSharing': return $translate.instant('Folder Not Shared');
+                case 'errors': return $translate.instant('Failed Items');
+                case 'checking': return $translate.instant('Checking Status');
+                default: return $scope.folderStatusText($scope.folders[folder] || {id: folder});
+            }
+        };
 
         function refreshCompletion(device, folder) {
             if (device === $scope.myID) {
@@ -787,11 +907,7 @@ angular.module('syncthing.core')
             }
 
             $http.get(urlbase + '/db/completion?device=' + device + '&folder=' + encodeURIComponent(folder)).success(function (data) {
-                if (!$scope.completion[device]) {
-                    $scope.completion[device] = {};
-                }
-                $scope.completion[device][folder] = data;
-                recalcCompletion(device);
+                setFolderCompletion(device, folder, data);
             }).error(function (data, status, headers, config) {
                 if (status === 404) {
                     console.log("refreshCompletion:", data);
@@ -850,6 +966,9 @@ angular.module('syncthing.core')
                         data[id].outbps = 0;
                     }
                 }
+                Object.keys(data).forEach(function (device) {
+                    if ($scope.connections[device]) { data[device].statusSince = $scope.connections[device].statusSince; }
+                });
                 $scope.connections = data;
                 console.log("refreshConnections", data);
             }).error($scope.emitHTTPError);
@@ -1159,18 +1278,22 @@ angular.module('syncthing.core')
         $scope.syncPercentage = function (folder) {
             var model = $scope.model[folder];
             if (typeof model === 'undefined') {
-                return 100;
+                return undefined;
             }
             if (model.needTotalItems === 0) {
                 return 100;
             }
-            if (model.needBytes == 0 && model.needTotalItems > 0) {
-                // We don't need any data, but we have deletes, directories,
-                // symlinks or zero byte files that we need to do. Drop down the
-                // completion percentage to indicate that we have stuff to do.
-                return 95;
-            }
-            return progressIntegerPercentage(model.inSyncBytes, model.globalBytes);
+            return dataPercentage(model.needBytes, model.globalBytes);
+        };
+
+        function dataPercentage(needed, total) {
+            if (!(total > 0)) { return undefined; }
+            return Math.max(0, Math.min(100, Math.floor(100 * (1 - needed / total))));
+        }
+
+        $scope.remoteDataPercentage = function (device, folder) {
+            var data = $scope.completion[device] && $scope.completion[device][folder];
+            return data && dataPercentage(data.needBytes, data.globalBytes);
         };
 
         $scope.scanPercentage = function (folder) {
@@ -1195,7 +1318,7 @@ angular.module('syncthing.core')
         }
 
         $scope.scanRate = function (folder) {
-            if (!$scope.scanProgress[folder]) {
+            if (!$scope.scanProgress[folder] || performance.now() - $scope.scanProgress[folder]._receivedAt > 15000) {
                 return 0;
             }
             return $scope.scanProgress[folder].rate;
@@ -1212,7 +1335,8 @@ angular.module('syncthing.core')
             // details, i.e.:
             // > 1 month
 
-            if ($scope.scanPercentage(folder) === undefined || !($scope.scanProgress[folder].rate > 0)) {
+            if ($scope.scanPercentage(folder) === undefined || !($scope.scanProgress[folder].rate > 0) ||
+                performance.now() - $scope.scanProgress[folder]._receivedAt > 15000) {
                 return "";
             }
             // Calculate remaining bytes and seconds based on our current
@@ -1220,6 +1344,7 @@ angular.module('syncthing.core')
 
             var remainingBytes = $scope.scanProgress[folder].total - $scope.scanProgress[folder].current;
             var seconds = remainingBytes / $scope.scanProgress[folder].rate;
+            if (!(remainingBytes > 0) || !isFinite(seconds)) { return ''; }
             // Round up to closest ten seconds to avoid flapping too much to
             // and fro.
 
@@ -1239,7 +1364,7 @@ angular.module('syncthing.core')
 
             // Separate out the number of hours.
             var hours = 0;
-            if (seconds > 3600) {
+            if (seconds >= 3600) {
                 hours = Math.floor(seconds / 3600);
                 res.push('' + hours + 'h');
                 seconds = seconds % 3600;
@@ -1279,11 +1404,18 @@ angular.module('syncthing.core')
             }
 
             if ($scope.connections[deviceCfg.deviceID].connected) {
-                if ($scope.completion[deviceCfg.deviceID] && $scope.completion[deviceCfg.deviceID]._total === 100) {
-                    return status + 'insync';
-                } else {
-                    return 'syncing';
+                if (unused) { return 'unused-insync'; }
+                var folders = $scope.deviceFolders(deviceCfg).filter(function (id) { return !$scope.folders[id].paused; });
+                if (!folders.length) { return 'folders-paused'; }
+                var phases = folders.map(function (id) { return $scope.syncActivity(id, deviceCfg.deviceID).phase; });
+                if (phases.some(function (phase) { return phase === 'checking' || phase === 'stale'; })) { return 'checking'; }
+                if (phases.some(function (phase) { return phase === 'receiving' || phase === 'finishing'; })) { return 'syncing'; }
+                if (phases.some(function (phase) { return phase === 'waiting'; })) { return 'sync-waiting'; }
+                if (phases.some(function (phase) { return phase === 'notSharing' || phase === 'paused'; })) { return 'folder-unavailable'; }
+                if (phases.every(function (phase) { return phase === 'complete'; })) {
+                    return 'insync';
                 }
+                return 'checking';
             }
 
             // Disconnected
@@ -1305,6 +1437,13 @@ angular.module('syncthing.core')
                     return 'fa-pause';
                 case 'syncing':
                     return 'fa-sync';
+                case 'checking':
+                case 'sync-waiting':
+                    return 'fa-hourglass-half';
+                case 'folders-paused':
+                    return 'fa-pause';
+                case 'folder-unavailable':
+                    return 'fa-exclamation-circle';
                 case 'unused-disconnected':
                 case 'unused-insync':
                 case 'unused-paused':
@@ -1324,6 +1463,14 @@ angular.module('syncthing.core')
                     return $translate.instant('Paused');
                 case 'syncing':
                     return $translate.instant('Syncing');
+                case 'checking':
+                    return $translate.instant('Checking Remote Status');
+                case 'sync-waiting':
+                    return $translate.instant('Waiting for Remote Progress');
+                case 'folders-paused':
+                    return $translate.instant('Shared Folders Paused');
+                case 'folder-unavailable':
+                    return $translate.instant('Folder Unavailable');
                 case 'unused-disconnected':
                     return $translate.instant('Disconnected (Unused)');
                 case 'unused-insync':
@@ -1374,7 +1521,7 @@ angular.module('syncthing.core')
                 case 'faileditems':
                     return $translate.instant('Failed Items');
                 case 'idle':
-                    return $translate.instant('Up to Date');
+                    return $translate.instant('Up to Date Locally');
                 case 'starting':
                     return $translate.instant('Starting');
                 case 'localadditions':
@@ -1403,7 +1550,11 @@ angular.module('syncthing.core')
                 case 'sync-waiting':
                     return $translate.instant('Waiting to Sync');
                 case 'syncing':
-                    return $translate.instant('Syncing');
+                    var activity = $scope.syncActivity(folder.id);
+                    if (activity.phase === 'finishing') { return $translate.instant('Applying File Changes'); }
+                    if (activity.phase === 'waiting') { return $translate.instant('Waiting for Progress'); }
+                    if (activity.phase === 'stale') { return $translate.instant('Waiting for Status Update'); }
+                    return $translate.instant('Receiving Data');
                 case 'unknown':
                     return $translate.instant('Unknown');
                 case 'unshared':
@@ -1421,7 +1572,7 @@ angular.module('syncthing.core')
             }
 
             if ($scope.connections[deviceCfg.deviceID].connected) {
-                if ($scope.completion[deviceCfg.deviceID] && $scope.completion[deviceCfg.deviceID]._total === 100) {
+                if ($scope.deviceStatus(deviceCfg) === 'insync' || $scope.deviceStatus(deviceCfg) === 'unused-insync') {
                     return 'success';
                 } else {
                     return 'primary';
