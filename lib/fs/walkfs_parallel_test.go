@@ -19,6 +19,14 @@ type observedWalkFS struct {
 	stat func(string) (FileInfo, error)
 }
 
+type orderedWalkFS struct{ Filesystem }
+
+func (f orderedWalkFS) DirNames(name string) ([]string, error) {
+	names, err := f.Filesystem.DirNames(name)
+	slices.Sort(names)
+	return names, err
+}
+
 func (f observedWalkFS) Lstat(name string) (FileInfo, error) { return f.stat(name) }
 
 func TestWalkParallelBoundedAndEarlyStop(t *testing.T) {
@@ -89,7 +97,7 @@ func TestWalkParallelBoundedAndEarlyStop(t *testing.T) {
 func TestWalkParallelOrderAndFreshSiblings(t *testing.T) {
 	for _, workers := range []int{1, 2, 4} {
 		t.Run(fmt.Sprint(workers), func(t *testing.T) {
-			filesystem := NewFilesystem(FilesystemTypeBasic, t.TempDir())
+			filesystem := NewWalkFilesystem(orderedWalkFS{NewFilesystem(FilesystemTypeBasic, t.TempDir())})
 			if err := filesystem.MkdirAll("a", 0o700); err != nil {
 				t.Fatal(err)
 			}
