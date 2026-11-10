@@ -46,7 +46,7 @@ func (f *BasicFilesystem) Unhide(name string) error {
 		return err
 	}
 
-	attrs &^= syscall.FILE_ATTRIBUTE_HIDDEN
+	attrs &^= syscall.FILE_ATTRIBUTE_HIDDEN | syscall.FILE_ATTRIBUTE_SYSTEM
 	return syscall.SetFileAttributes(p, attrs)
 }
 
@@ -65,7 +65,7 @@ func (f *BasicFilesystem) Hide(name string) error {
 		return err
 	}
 
-	attrs |= syscall.FILE_ATTRIBUTE_HIDDEN
+	attrs |= syscall.FILE_ATTRIBUTE_HIDDEN | syscall.FILE_ATTRIBUTE_SYSTEM
 	return syscall.SetFileAttributes(p, attrs)
 }
 
