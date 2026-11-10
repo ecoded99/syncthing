@@ -16,7 +16,7 @@ jobs:
           - os: windows-latest
             platform: windows-amd64
             binary: syncthing.exe
-          - os: macos-14
+          - os: macos-15
             platform: macos-arm64
             binary: syncthing
           - os: ubuntu-latest
