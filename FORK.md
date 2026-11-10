@@ -11,6 +11,29 @@ which still checks its hash and applies the usual conflict, metadata, and
 per-file durability rules. Encrypted folders and stock peers use ordinary reads.
 There is no direct unpacking over live folders. Batching is disabled by default.
 
+## Windows installer
+
+Download the Windows x64 `syncthing-windows-amd64-<tag>-setup.exe` from the
+fork release and verify it against `SHA256SUMS.txt`. The installer does not
+have an Authenticode signature. The separate signed ZIP remains the archive
+used by Syncthing's in-app updater.
+
+Setup runs per user without an administrator prompt. It adds a Start menu
+shortcut and, by default, starts the tray app quietly when you sign in.
+Quit any previous Syncthing instance and disable its old startup entry before
+switching. Setup and uninstall leave the Syncthing profile and synced files in
+place. For unattended startup before sign-in, follow the Task Scheduler steps
+in [the Windows setup guide](script/windows/README.txt).
+
+To build a setup EXE locally, install Go and Inno Setup 6.3 or newer and run
+the following in PowerShell from the repository root:
+
+```powershell
+$version = 'v2.1.7-ecoded.19'
+go run build.go -version $version build
+./script/package_windows_installer.ps1 -Binary ./syncthing.exe -Version $version -OutputDirectory ./bin
+```
+
 ## Link speed tests
 
 Expand a connected device under Remote Devices and click **Test Link Speed**

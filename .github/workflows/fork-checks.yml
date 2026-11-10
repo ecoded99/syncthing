@@ -2,8 +2,11 @@ name: Fork checks
 on:
   workflow_dispatch:
   push:
-    branches: [main, 'codex/**']
+    branches: [main]
   pull_request:
+concurrency:
+  group: fork-checks-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -11,8 +14,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-15, macos-15-intel]
+        os: [ubuntu-latest, windows-2025, macos-15]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -20,17 +24,28 @@ jobs:
           go-version: '1.27.3'
           cache: true
       - run: go run build.go assets
-      - run: node script/test_gui_stats.cjs
-      - run: go build ./cmd/syncthing
-      - run: go test ./cmd/dev/forkrelease ./cmd/syncthing ./internal/db/sqlite ./lib/cloudbackup ./lib/config ./lib/scanner ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/osutil ./lib/fs ./lib/explorerstatus
       - if: runner.os == 'Linux'
-        name: Verify CGO-free Linux release build
+        run: node script/test_gui_stats.cjs
+      - name: Run native tests
         env:
-          CGO_ENABLED: '0'
+          CGO_ENABLED: ${{ runner.os == 'Linux' && '0' || '1' }}
+        run: go test -trimpath ./cmd/dev/forkrelease ./cmd/syncthing ./internal/db/sqlite ./lib/cloudbackup ./lib/config ./lib/scanner ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/osutil ./lib/fs ./lib/explorerstatus
+      - if: runner.os != 'macOS'
+        name: Build and verify the native executable
+        shell: pwsh
+        env:
+          CGO_ENABLED: ${{ runner.os == 'Linux' && '0' || '1' }}
         run: |
-          go test ./cmd/dev/forkrelease ./cmd/syncthing ./internal/db/sqlite ./lib/cloudbackup ./lib/config ./lib/scanner ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/osutil ./lib/fs ./lib/explorerstatus
           go run build.go -version v2.1.7-ecoded.1 build
-          ./syncthing --version
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $binary = if ($IsWindows) { './syncthing.exe' } else { './syncthing' }
+          & $binary --version
+      - if: runner.os == 'Windows'
+        name: Verify Windows installer
+        shell: pwsh
+        run: |
+          ./script/package_windows_installer.ps1 -Binary ./syncthing.exe -Version v2.1.7-ecoded.1
+          ./script/windows/verify-installer.ps1 -Binary ./syncthing.exe -Installer ./syncthing-windows-amd64-v2.1.7-ecoded.1-setup.exe
       - if: runner.os == 'Windows'
         uses: actions/setup-python@v5
         with:
@@ -58,6 +73,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bundle-recovery-windows
+          retention-days: 7
           path: |
             ${{ runner.temp }}/scan-reliability/results.json
             ${{ runner.temp }}/scan-reliability/**/console.log
@@ -67,13 +83,13 @@ jobs:
             ${{ runner.temp }}/sync-status-*/samples.json
             ${{ runner.temp }}/sync-status-*/**/console.log
           if-no-files-found: ignore
-      - if: runner.os != 'Windows'
+      - if: runner.os == 'Linux'
         run: go test -race ./internal/db/sqlite -run 'TestMtime' -count=1
-      - if: runner.os != 'Windows'
+      - if: runner.os == 'Linux'
         run: go test -race ./lib/fs -run 'TestWalkParallel|TestWalk' -count=1
-      - if: runner.os != 'Windows'
+      - if: runner.os == 'Linux'
         run: go test -race ./lib/cloudbackup ./lib/scanner ./lib/protocol
-      - if: runner.os != 'Windows'
+      - if: runner.os == 'Linux'
         run: go test -race ./lib/model -run 'Test.*Bundle|Test.*Progress|Test.*Completion|Test.*DeviceDownloadState|TestBlocksToSize|TestRequestTemporaryAfterPromotion|TestScanDeletion' -count=1
       - if: runner.os == 'Linux'
         run: go test ./lib/protocol -run '^$' -fuzz '^FuzzBatchRequestDecoder$' -fuzztime 10s

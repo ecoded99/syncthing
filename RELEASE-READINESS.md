@@ -15,16 +15,16 @@ remained queued on macOS 15 and 26. The macOS 14 pool subsequently ran natively
 on ARM64 and passed the full core and bundle race suites for the exact `.10`
 tag. The completion workflow adds its signed Mac ARM archive to the existing
 release, preserves existing assets, rebuilds their checksum manifest and
-refreshes the updater feed. Normal releases now include Windows and Mac ARM,
-using macOS 14 for ARM validation and signing. The Intel Mac package remains
-deferred; its clients skip releases without a matching asset. Windows, Linux
-and Intel Mac checks passed for the application changes. The general
-all-platform gates below apply when publishing the full platform set.
+refreshes the updater feed. Current releases include Windows amd64, Linux amd64, and macOS arm64.
+Intel Mac clients skip releases without a matching asset.
 
-- Build and run the fork's full core suites on Windows, Linux, macOS arm64 and
-  macOS amd64 through `Fork checks` before merging.
-- Run protocol and model bundle tests under the race detector on non-Windows
-  CI runners. Release builds repeat these tests on both macOS architectures.
+- Run the core test suites on Windows, Linux, and Apple Silicon through
+  the Fork checks workflow before merging.
+- Run race checks on Linux. Tagged releases also run targeted race checks
+  against the exact release source.
+- Verify the Windows setup EXE installs the release binary, supports opting out
+  of sign-in startup, and removes its shortcuts during uninstall. Include the
+  installer in the release checksum manifest.
 - Fuzz both request and response framing decoders on Linux. They must reject
   malformed frames and preserve the existing member/data bounds.
 - Verify the candidate with an isolated interrupted receiver and sender

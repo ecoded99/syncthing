@@ -9,8 +9,8 @@ on:
       runner:
         description: Standard Apple Silicon runner
         type: choice
-        options: [macos-14, macos-26, macos-15]
-        default: macos-14
+        options: [macos-15, macos-26]
+        default: macos-15
 permissions:
   contents: read
 concurrency:
@@ -57,6 +57,8 @@ jobs:
           name: signed-release-macos-arm64
           path: syncthing-macos-arm64-*.zip
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
   publish:
     needs: build
     runs-on: ubuntu-latest
@@ -74,12 +76,11 @@ jobs:
         shell: bash
         run: |
           gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft == false' | grep -qx true
-          gh release download "$RELEASE_TAG" --pattern '*.zip' --pattern SHA256SUMS.txt --dir existing
-          (cd existing && sha256sum --check SHA256SUMS.txt)
-          gh release upload "$RELEASE_TAG" "release/syncthing-macos-arm64-$RELEASE_TAG.zip"
-          cp "release/syncthing-macos-arm64-$RELEASE_TAG.zip" existing/
-          (cd existing && sha256sum *.zip > SHA256SUMS.txt)
-          gh release upload "$RELEASE_TAG" existing/SHA256SUMS.txt --clobber
+          asset="syncthing-macos-arm64-$RELEASE_TAG.zip"
+          gh release download "$RELEASE_TAG" --pattern SHA256SUMS.txt --dir release
+          gh release upload "$RELEASE_TAG" "release/$asset"
+          (cd release && sha256sum "$asset" >> SHA256SUMS.txt)
+          gh release upload "$RELEASE_TAG" release/SHA256SUMS.txt --clobber
   update-feed:
     needs: publish
     permissions:

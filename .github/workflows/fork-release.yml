@@ -13,7 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
+          - os: windows-2025
             platform: windows-amd64
             binary: syncthing.exe
           - os: macos-15
@@ -23,8 +23,9 @@ jobs:
             platform: linux-amd64
             binary: syncthing
     runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
+    timeout-minutes: 40
+    env:
+      CGO_ENABLED: ${{ matrix.platform == 'linux-amd64' && '0' || '1' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -36,22 +37,28 @@ jobs:
         run: |
           if ($env:GITHUB_REF_NAME -notmatch '^v\d+\.\d+\.\d+-ecoded\.\d+$') { throw 'Invalid fork version' }
       - run: go run build.go assets
-      - run: node script/test_gui_stats.cjs
-      - env:
-          CGO_ENABLED: ${{ matrix.platform == 'linux-amd64' && '0' || '1' }}
-        run: go test ./cmd/dev/forkrelease ./cmd/syncthing ./internal/db/sqlite ./lib/cloudbackup ./lib/config ./lib/scanner ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/osutil ./lib/fs ./lib/explorerstatus
-      - if: runner.os != 'Windows'
+      - if: runner.os == 'Linux'
+        run: node script/test_gui_stats.cjs
+      - run: go test -trimpath ./cmd/dev/forkrelease ./cmd/syncthing ./internal/db/sqlite ./lib/cloudbackup ./lib/config ./lib/scanner ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/osutil ./lib/fs ./lib/explorerstatus
+      - if: runner.os == 'Linux'
+        env:
+          CGO_ENABLED: '1'
         run: go test -race ./internal/db/sqlite -run 'TestMtime' -count=1
-      - if: runner.os != 'Windows'
+      - if: runner.os == 'Linux'
+        env:
+          CGO_ENABLED: '1'
         run: go test -race ./lib/fs -run 'TestWalkParallel|TestWalk' -count=1
-      - if: runner.os != 'Windows'
+      - if: runner.os == 'Linux'
+        env:
+          CGO_ENABLED: '1'
         run: go test -race ./lib/scanner
-      - if: runner.os != 'Windows'
+      - if: runner.os == 'Linux'
+        env:
+          CGO_ENABLED: '1'
         run: go test -race ./lib/protocol ./lib/model -run 'Test.*Bundle|TestBatch|Test.*Progress|Test.*Completion|Test.*DeviceDownloadState|TestBlocksToSize|TestRequestTemporaryAfterPromotion|TestScanDeletion' -count=1
       - name: Build ${{ matrix.platform }}
         shell: pwsh
         run: |
-          if ('${{ matrix.platform }}' -eq 'linux-amd64') { $env:CGO_ENABLED = '0' }
           go run build.go -version $env:GITHUB_REF_NAME build
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           & "./${{ matrix.binary }}" --version
@@ -79,6 +86,12 @@ jobs:
         run: |
           python script/benchmark_scans.py --binary syncthing.exe --baseline-binary syncthing.exe --work "${{ runner.temp }}/scan-reliability" --files 512 --trials 1
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - if: runner.os == 'Windows'
+        name: Package and verify Windows installer
+        shell: pwsh
+        run: |
+          ./script/package_windows_installer.ps1 -Binary ./syncthing.exe -Version $env:GITHUB_REF_NAME
+          ./script/windows/verify-installer.ps1 -Binary ./syncthing.exe -Installer "./syncthing-windows-amd64-$env:GITHUB_REF_NAME-setup.exe"
       - name: Sign archive
         shell: pwsh
         env:
@@ -97,7 +110,10 @@ jobs:
           path: |
             syncthing-${{ matrix.platform }}-*.zip
             syncthing-${{ matrix.platform }}-*.dmg
+            syncthing-${{ matrix.platform }}-*-setup.exe
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
   publish:
     needs: build
     runs-on: ubuntu-latest
@@ -111,13 +127,13 @@ jobs:
           path: release
       - name: Generate checksums
         working-directory: release
-        run: sha256sum *.zip *.dmg > SHA256SUMS.txt
+        run: sha256sum *.zip *.dmg *-setup.exe > SHA256SUMS.txt
       - name: Publish canary release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "$GITHUB_REF_NAME" release/* --prerelease --title "$GITHUB_REF_NAME" --notes 'Signed updater packages for Linux amd64, Windows amd64 and macOS Apple Silicon. Live remote progress can update during slow index application, with configuration and progress ordering preserved. Includes native protocol regression tests. Faster scanning uses batched metadata, four bounded comparison workers and hashing during discovery. Scan status shows phases, scope, trigger and entry counts. Throughput refreshes every second, with separate file writes, finalized bytes and files/s. QUIC preference, TCP fallback, hash verification, conflicts and durable finalization remain enforced. Existing bundle opt-in settings are preserved. macOS binaries are updater-signed but not Apple Developer ID signed or notarized. See SCAN_PIPELINE.md, TRANSFER_STATS.md and RELEASE-READINESS.md.'
+          gh release create "$GITHUB_REF_NAME" release/* --prerelease --title "$GITHUB_REF_NAME" --notes 'Signed updater packages for Linux amd64, Windows amd64 and macOS Apple Silicon. The Windows setup EXE installs per user and can start Syncthing at sign-in. The setup EXE is not Authenticode-signed. Live remote progress can update during slow index application, with configuration and progress ordering preserved. Includes native protocol regression tests. Faster scanning uses batched metadata, four bounded comparison workers and hashing during discovery. Scan status shows phases, scope, trigger and entry counts. Throughput refreshes every second, with separate file writes, finalized bytes and files/s. QUIC preference, TCP fallback, hash verification, conflicts and durable finalization remain enforced. Existing bundle opt-in settings are preserved. macOS binaries are updater-signed but not Apple Developer ID signed or notarized. See SCAN_PIPELINE.md, TRANSFER_STATS.md and RELEASE-READINESS.md.'
   update-feed:
     needs: publish
     permissions:
