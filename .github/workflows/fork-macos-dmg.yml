@@ -12,10 +12,10 @@ permissions:
   contents: read
 concurrency:
   group: macos-dmg-${{ github.event_name }}-${{ github.ref }}-${{ inputs.release_tag }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   package:
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       RELEASE_TAG: ${{ inputs.release_tag || 'v2.1.7-ecoded.11' }}
     steps:
@@ -25,16 +25,17 @@ jobs:
           go-version: '1.27.3'
           cache: true
       - name: Download and verify the existing signed engine
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-ecoded\.[0-9]+$ ]]
           test "$(uname -m)" = arm64
-          mkdir existing
-          gh release download "$RELEASE_TAG" --pattern '*.zip' --pattern SHA256SUMS.txt --dir existing
-          (cd existing && grep '[.]zip$' SHA256SUMS.txt | shasum -a 256 --check)
-          archive="existing/syncthing-macos-arm64-$RELEASE_TAG.zip"
+          archive_name="syncthing-macos-arm64-$RELEASE_TAG.zip"
+          gh release download "$RELEASE_TAG" --pattern "$archive_name" --pattern SHA256SUMS.txt --dir existing
+          (cd existing && awk -v archive="$archive_name" '$2 == archive' SHA256SUMS.txt | shasum -a 256 --check)
+          archive="existing/$archive_name"
           go run ./cmd/dev/forkrelease -verify -archive "$archive"
           unzip -p "$archive" syncthing > existing/syncthing
           chmod 755 existing/syncthing
@@ -46,6 +47,8 @@ jobs:
           name: macos-arm64-dmg
           path: syncthing-macos-arm64-*.dmg
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
   publish:
     if: github.event_name == 'workflow_dispatch'
     needs: package
@@ -64,9 +67,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release download "$RELEASE_TAG" --pattern '*.zip' --pattern SHA256SUMS.txt --dir existing
-          (cd existing && grep '[.]zip$' SHA256SUMS.txt | sha256sum --check)
-          gh release upload "$RELEASE_TAG" "release/syncthing-macos-arm64-$RELEASE_TAG.dmg"
-          cp release/*.dmg existing/
-          (cd existing && sha256sum *.zip *.dmg > SHA256SUMS.txt)
-          gh release upload "$RELEASE_TAG" existing/SHA256SUMS.txt --clobber
+          asset="syncthing-macos-arm64-$RELEASE_TAG.dmg"
+          gh release download "$RELEASE_TAG" --pattern SHA256SUMS.txt --dir release
+          gh release upload "$RELEASE_TAG" "release/$asset"
+          (cd release && sha256sum "$asset" >> SHA256SUMS.txt)
+          gh release upload "$RELEASE_TAG" release/SHA256SUMS.txt --clobber
