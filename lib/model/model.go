@@ -2285,6 +2285,24 @@ func (m *model) setIgnores(cfg config.FolderConfiguration, content []string) err
 	return nil
 }
 
+// applyDefaultIgnores initializes new folders without replacing an existing
+// ignore file, including an intentionally empty one.
+func applyDefaultIgnores(cfg config.FolderConfiguration, lines []string) error {
+	if len(lines) == 0 || cfg.Type == config.FolderTypeReceiveEncrypted {
+		return nil
+	}
+	if err := cfg.CreateRoot(); err != nil {
+		return err
+	}
+	ffs := cfg.Filesystem()
+	if _, err := ffs.Lstat(".stignore"); err == nil {
+		return nil
+	} else if !fs.IsNotExist(err) {
+		return err
+	}
+	return ignore.WriteIgnores(ffs, ".stignore", lines)
+}
+
 // OnHello is called when an device connects to us.
 // This allows us to extract some information from the Hello message
 // and add it to a list of known devices ahead of any checks.
@@ -2998,6 +3016,10 @@ func (m *model) CommitConfiguration(from, to config.Configuration) bool {
 	for folderID, cfg := range toFolders {
 		if _, ok := fromFolders[folderID]; !ok {
 			// A folder was added.
+			if err := applyDefaultIgnores(cfg, to.Defaults.Ignores.Lines); err != nil {
+				slog.Error("Failed to apply default ignores to new folder", cfg.LogAttr(), slogutil.Error(err))
+				continue
+			}
 			if cfg.Paused {
 				slog.Info("Paused folder", cfg.LogAttr())
 			} else {
