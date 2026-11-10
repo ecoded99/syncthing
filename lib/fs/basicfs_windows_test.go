@@ -16,6 +16,45 @@ import (
 	"testing"
 )
 
+func TestHideAndUnhideWindowsAttributes(t *testing.T) {
+	dir := t.TempDir()
+	filesystem := newBasicFilesystem(dir)
+	if err := os.WriteFile(filepath.Join(dir, "file"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "directory"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	const mask = syscall.FILE_ATTRIBUTE_HIDDEN | syscall.FILE_ATTRIBUTE_SYSTEM
+	for _, name := range []string{"file", "directory"} {
+		t.Run(name, func(t *testing.T) {
+			path, err := syscall.UTF16PtrFromString(filepath.Join(dir, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := syscall.GetFileAttributes(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := filesystem.Hide(name); err != nil {
+				t.Fatal(err)
+			}
+			hidden, err := syscall.GetFileAttributes(path)
+			if err != nil || hidden&mask != mask || hidden &^ mask != before &^ mask {
+				t.Fatalf("hidden attributes = %#x, original = %#x, error = %v", hidden, before, err)
+			}
+			if err := filesystem.Unhide(name); err != nil {
+				t.Fatal(err)
+			}
+			visible, err := syscall.GetFileAttributes(path)
+			if err != nil || visible&mask != 0 || visible &^ mask != before &^ mask {
+				t.Fatalf("unhidden attributes = %#x, original = %#x, error = %v", visible, before, err)
+			}
+		})
+	}
+}
+
 func TestWindowsPaths(t *testing.T) {
 	type testCase struct {
 		input        string
