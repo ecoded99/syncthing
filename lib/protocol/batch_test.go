@@ -95,10 +95,13 @@ type batchTestModel struct {
 	*TestModel
 	calls   atomic.Int64
 	badOnce atomic.Bool
+	byName  sync.Map // request name -> *atomic.Int64
 }
 
 func (m *batchTestModel) Request(_ Connection, r *Request) (RequestResponse, error) {
 	m.calls.Add(1)
+	count, _ := m.byName.LoadOrStore(r.Name, new(atomic.Int64))
+	count.(*atomic.Int64).Add(1)
 	if m.badOnce.Swap(false) {
 		return &fakeRequestResponse{[]byte("bad")}, nil
 	}
@@ -153,12 +156,22 @@ func TestBatchTransport(t *testing.T) {
 				})
 			}
 			wg.Wait()
+			for i := range 64 {
+				name := fmt.Sprint(i)
+				if i == 7 {
+					name = "missing"
+				}
+				count, ok := m.byName.Load(name)
+				if !ok || count.(*atomic.Int64).Load() != 1 {
+					t.Fatalf("member %q was not authorized exactly once", name)
+				}
+			}
 			if enabled {
 				m.badOnce.Store(true)
 
-				for range 32 {
+				for i := range 32 {
 					wg.Go(func() {
-						data, err := c0.Request(ctx, batchFixture("fallback"))
+						data, err := c0.Request(ctx, batchFixture(fmt.Sprintf("fallback-%d", i)))
 						if err != nil || string(data) != "data" {
 							t.Errorf("fallback failed: %q %v", data, err)
 						}
@@ -171,8 +184,26 @@ func TestBatchTransport(t *testing.T) {
 			}
 			expectedCalls := int64(64)
 			if enabled {
-				// The failed bundle drains all concurrent reads before ordinary retry.
-				expectedCalls += 64
+				// Scheduling may split the requests across bundles. Only members
+				// of the corrupt bundle are retried; every member must still pass
+				// authorization, with at least one retry proving the fallback ran.
+				fallbackCalls := int64(0)
+				for i := range 32 {
+					name := fmt.Sprintf("fallback-%d", i)
+					count, ok := m.byName.Load(name)
+					if !ok {
+						t.Fatalf("member %q was never authorized", name)
+					}
+					n := count.(*atomic.Int64).Load()
+					if n < 1 || n > 2 {
+						t.Fatalf("member %q authorized %d times", name, n)
+					}
+					fallbackCalls += n
+				}
+				if fallbackCalls <= 32 {
+					t.Fatal("corrupt bundle did not retry through ordinary authorization")
+				}
+				expectedCalls += fallbackCalls
 			}
 			if m.calls.Load() != expectedCalls {
 				t.Fatal("not all members authorized", m.calls.Load())

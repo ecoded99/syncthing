@@ -26,6 +26,8 @@ jobs:
       - run: go run build.go assets
       - if: runner.os == 'Linux'
         run: node script/test_gui_stats.cjs
+      - if: runner.os == 'Linux'
+        run: node script/test_gui_folder_path.cjs
       - name: Run native tests
         env:
           CGO_ENABLED: ${{ runner.os == 'Linux' && '0' || '1' }}
@@ -50,6 +52,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - if: runner.os == 'Windows'
+        name: Verify folder relocation and missing-path protection
+        run: python script/smoke_folder_path.py --binary syncthing.exe --work "${{ runner.temp }}/folder-path"
       - if: runner.os == 'Windows'
         name: Bundle interrupted-transfer recovery
         run: python script/smoke_bundle_recovery.py --binary syncthing.exe --work "${{ runner.temp }}/bundle-recovery" --files 2048

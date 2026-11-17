@@ -75,7 +75,8 @@
           </div>
           <div class="form-group" ng-class="{'has-error': folderEditor.folderPath.$invalid && folderEditor.folderPath.$dirty && !editingFolderDefaults()}">
             <label translate for="folderPath">Folder Path</label>
-            <input name="folderPath" ng-readonly="editingFolderExisting()" id="folderPath" class="form-control" type="text" ng-model="currentFolder.path" list="directory-list" ng-required="!editingFolderDefaults()" ng-aria-required="!editingFolderDefaults()" path-is-sub-dir />
+            <input name="folderPath" ng-readonly="editingFolderExisting() && !currentFolder._editPath" id="folderPath" class="form-control" type="text" ng-model="currentFolder.path" list="directory-list" ng-required="!editingFolderDefaults()" ng-aria-required="!editingFolderDefaults()" path-is-sub-dir />
+            <button type="button" class="btn btn-default btn-sm" ng-if="editingFolderExisting() && !currentFolder._editPath" ng-click="currentFolder._editPath = true" translate>Change Path</button>
             <datalist id="directory-list">
               <option ng-repeat="directory in directoryList" value="{{ directory }}" />
             </datalist>
@@ -89,6 +90,10 @@
                 <span class="text-danger" translate translate-value-other-folder="{{folderPathErrors.otherID}}" translate-value-other-folder-label="{{folderPathErrors.otherLabel}}" ng-if="folderPathErrors.otherLabel.length != 0">Warning, this path is a parent directory of an existing folder "{%otherFolderLabel%}" ({%otherFolder%}).</span>
               </span>
             </p>
+            <div class="alert alert-warning" ng-if="folderPathChanged()">
+              <p translate>Saving this path change pauses the folder. Files are not moved automatically.</p>
+              <p translate>After saving, move the entire folder to the new path, including hidden .stfolder, .stignore and .stversions entries, then resume syncing. Keep all files until the move is complete. The folder ID and sharing settings are preserved.</p>
+            </div>
           </div>
         </div>
 
@@ -507,7 +512,7 @@
   </div>
   <div class="modal-footer">
     <button type="button" class="btn btn-primary btn-sm" ng-click="saveFolder()" ng-disabled="folderEditor.$invalid">
-      <span class="fas fa-check"></span>&nbsp;<span translate>Save</span>
+      <span class="fas fa-check"></span>&nbsp;<span ng-if="!folderPathChanged()" translate>Save</span><span ng-if="folderPathChanged()" translate>Save and Pause</span>
     </button>
     <button type="button" class="btn btn-default btn-sm" data-dismiss="modal">
       <span class="fas fa-times"></span>&nbsp;<span translate>Close</span>
