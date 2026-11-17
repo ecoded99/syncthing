@@ -39,6 +39,8 @@ jobs:
       - run: go run build.go assets
       - if: runner.os == 'Linux'
         run: node script/test_gui_stats.cjs
+      - if: runner.os == 'Linux'
+        run: node script/test_gui_folder_path.cjs
       - run: go test -trimpath ./cmd/dev/forkrelease ./cmd/syncthing ./internal/db/sqlite ./lib/cloudbackup ./lib/config ./lib/scanner ./lib/protocol ./lib/upgrade ./lib/api ./lib/syncthing ./lib/model ./lib/osutil ./lib/fs ./lib/explorerstatus
       - if: runner.os == 'Linux'
         env:
@@ -67,6 +69,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - if: runner.os == 'Windows'
+        name: Verify folder relocation and missing-path protection before signing
+        run: python script/smoke_folder_path.py --binary syncthing.exe --work "${{ runner.temp }}/folder-path"
       - if: runner.os == 'Windows'
         name: Verify interrupted-transfer recovery before signing
         run: python script/smoke_bundle_recovery.py --binary syncthing.exe --work "${{ runner.temp }}/bundle-recovery" --files 2048
@@ -133,7 +138,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "$GITHUB_REF_NAME" release/* --prerelease --title "$GITHUB_REF_NAME" --notes 'Signed updater packages for Linux amd64, Windows amd64 and macOS Apple Silicon. The Windows setup EXE installs per user and can start Syncthing at sign-in. The setup EXE is not Authenticode-signed. Live remote progress can update during slow index application, with configuration and progress ordering preserved. Includes native protocol regression tests. Faster scanning uses batched metadata, four bounded comparison workers and hashing during discovery. Scan status shows phases, scope, trigger and entry counts. Throughput refreshes every second, with separate file writes, finalized bytes and files/s. QUIC preference, TCP fallback, hash verification, conflicts and durable finalization remain enforced. Existing bundle opt-in settings are preserved. macOS binaries are updater-signed but not Apple Developer ID signed or notarized. See SCAN_PIPELINE.md, TRANSFER_STATS.md and RELEASE-READINESS.md.'
+          gh release create "$GITHUB_REF_NAME" release/* --prerelease --title "$GITHUB_REF_NAME" --notes 'Existing folder paths can now be changed under Edit > General > Change Path. Saving pauses the folder; move all files including hidden .stfolder, .stignore and .stversions entries before resuming. Folder IDs, sharing settings and indexes are preserved. Verified with two disposable peers, missing-destination protection, bidirectional sync and restart recovery. Windows now includes a per-user setup EXE with optional automatic startup at sign-in. Installed copies continue to update through the signed in-app updater without manual ZIP downloads. The setup EXE is not Authenticode-signed. Signed updater archives are included for Windows amd64, Linux amd64 and macOS Apple Silicon. macOS builds are not Apple Developer ID signed or notarized. See FORK.md and script/windows/README.txt.'
   update-feed:
     needs: publish
     permissions:

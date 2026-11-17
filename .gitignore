@@ -20,3 +20,5 @@ deb
 /compat.json
 *.exe~
 /script/__pycache__/
+/.playwright-cli/
+/output/playwright/

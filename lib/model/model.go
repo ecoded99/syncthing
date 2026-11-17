@@ -2982,6 +2982,9 @@ func (*model) VerifyConfiguration(from, to config.Configuration) error {
 	toFolders := to.FolderMap()
 	for _, from := range from.Folders {
 		to, ok := toFolders[from.ID]
+		if ok && !to.Paused && (from.FilesystemType != to.FilesystemType || from.Filesystem().URI() != to.Filesystem().URI()) {
+			return errors.New("pause the folder when changing its path; move all files including the folder marker before resuming")
+		}
 		if ok && from.Type != to.Type && (from.Type == config.FolderTypeReceiveEncrypted || to.Type == config.FolderTypeReceiveEncrypted) {
 			return errors.New("folder type must not be changed from/to receive-encrypted")
 		}

@@ -2638,6 +2638,11 @@ angular.module('syncthing.core')
             return $scope.currentFolder._editing == 'existing';
         }
 
+        $scope.folderPathChanged = function () {
+            return $scope.editingFolderExisting() &&
+                $scope.currentFolder.path !== $scope.currentFolder._originalPath;
+        };
+
         $scope.editingFolderNew = function() {
             return $scope.has(['new', 'new-pending'], $scope.currentFolder._editing);
         }
@@ -2695,6 +2700,8 @@ angular.module('syncthing.core')
             $scope.currentFolder._editing = "existing";
             editFolderLoadIgnores();
             editFolder(initialTab);
+            // Compare against the path after the editor normalizes its trailing separator.
+            $scope.currentFolder._originalPath = $scope.currentFolder.path;
         };
 
         function editFolderLoadingIgnores() {
@@ -2821,6 +2828,15 @@ angular.module('syncthing.core')
         };
 
         $scope.saveFolder = function () {
+            if ($scope.editingFolderExisting()) {
+                // Finish writes to the old root before changing configuration.
+                // On failure leave the editor and sharing selections intact for retry.
+                return $q.when(saveFolderIgnoresExisting()).then(saveFolder, $scope.emitHTTPError);
+            }
+            return saveFolder();
+        };
+
+        function saveFolder() {
             if ($scope.currentFolder._editing == "new-ignores") {
                 // On modal being hidden without clicking save, the defaults will be saved.
                 $scope.ignores.saved = true;
@@ -2831,6 +2847,13 @@ angular.module('syncthing.core')
 
             $scope.validateXattrFilter();
             var folderCfg = angular.copy($scope.currentFolder);
+            if ($scope.folderPathChanged()) {
+                // Stop the old runner before the user moves any files. Keep the
+                // index and marker checks so an empty destination cannot publish deletions.
+                folderCfg.paused = true;
+            }
+            delete folderCfg._originalPath;
+            delete folderCfg._editPath;
             $scope.currentSharing.selected[$scope.myID] = true;
             var newDevices = [];
             folderCfg.devices.forEach(function (dev) {
@@ -2894,7 +2917,6 @@ angular.module('syncthing.core')
             $scope.config.folders = folderList($scope.folders);
 
             if ($scope.currentFolder._editing == "existing") {
-                saveFolderIgnoresExisting();
                 $scope.saveConfig().then(function () {
                     hideModal('#editFolder');
                 });
@@ -2931,8 +2953,8 @@ angular.module('syncthing.core')
                     });
                 }
             }, $scope.emitHTTPError);
-        };
-        
+        }
+
         $scope.isFolderTabDisabled = function (tab) {
             if (!$scope.currentFolder) {
                 return false;

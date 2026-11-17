@@ -302,6 +302,22 @@ directly; on first start after updating, an install still on the stock
 
 ## Signed automatic updates
 
+Existing folders support **Edit > General > Change Path**. Saving a changed
+path pauses the folder and preserves its ID, sharing settings and index. Move
+the entire folder, including hidden `.stfolder`, `.stignore` and `.stversions`
+entries, to the new path before resuming. Files are not moved automatically.
+The existing missing-path/marker protection prevents scanning an unprepared
+destination as deletions. API clients must include `"paused": true` when
+changing an existing folder's path or filesystem type.
+
+Windows releases include a `*-setup.exe` installer. It installs per user and
+offers **Start Syncthing automatically when I sign in**, enabled by default.
+Rerun setup to change this option. Installed copies continue to use the signed
+in-app updater; subsequent updates do not require downloading a ZIP. Setup
+retains the default user profile and synced folders. Quit any existing copy and
+disable its previous startup entry before switching to the installer. The setup
+EXE is not Authenticode-signed. See [Windows setup instructions](script/windows/README.txt).
+
 The feed is `https://raw.githubusercontent.com/ecoded99/syncthing/update-feed/releases.json`.
 It is refreshed after each signed release and served without GitHub REST API
 quotas. Archive URLs point directly to public release downloads; the native
